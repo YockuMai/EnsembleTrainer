@@ -1,0 +1,113 @@
+# R history files
+.Rhistory
+.Rapp.history
+.RData
+.Ruserdata
+*.Rhistory
+*.Rapp.history
+*.RData
+*.Ruserdata
+
+# R environment files
+.Renviron
+.Rprofile
+
+# R Studio files
+.Rproj.user/
+.rproj.user/
+*.Rproj
+*.rproj
+
+# Package build files
+man/
+NAMESPACE
+DESCRIPTION
+NEWS.md
+README.md
+LICENSE
+LICENSE.md
+inst/
+src/
+config.R
+
+# Data files (customize as needed)
+# *.csv
+# *.tsv
+# *.xlsx
+# *.xls
+# *.rds
+# *.rda
+# data/
+# raw_data/
+# output/
+# results/
+
+# Log files
+*.log
+logs/
+
+# Temporary files
+*.tmp
+*.temp
+.DS_Store
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.syo
+*~
+
+# OS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Python (if used)
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+pip-log.txt
+pip-delete-this-directory.txt
+.venv/
+venv/
+ENV/
+env/
+
+# Julia (if used)
+*.jl.cov
+*.jl.*.cov
+*.jl.mem
+Manifest.toml
+Project.toml
+
+# R Markdown compile outputs
+docs/
+docsource/
+vignettes/
+*.md
+*.html
+*.pdf
+
+# Test files
+tests/
+testthat/
+
+# Compiled source
+*.o
+*.so
+*.dll
+*.dylib
+
+# Other
+*.bak
+*.backup
+*.orig
+*~
