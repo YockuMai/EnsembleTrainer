@@ -1,12 +1,13 @@
 source("R/dataLoader.R")
 
-dataLoader <- DataLoader$new()
-
 loadDataServer <- function(id) {
   moduleServer(id, function(input, output, session) {
+    dataLoader <- DataLoader$new()
+
     data_reactive <- reactiveValues(data = NULL, file = NULL)
     user_id_rv <- reactiveVal(NULL)
 
+    # TODO: Сделать отдельный модуль для работы с куками и управлением папкой data
     # Получаем или создаем постоянный user_id через cookie
     observe({
       if (is.null(user_id_rv())) {

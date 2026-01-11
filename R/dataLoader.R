@@ -22,7 +22,7 @@ DataLoader <- R6::R6Class("DataLoader",
           private$error_message <- "Файл должен иметь расширение .csv"
           return(NULL)
         }
-        data <- read.csv(filepath, stringsAsFactors = TRUE, sep=sep)
+        data <- read.csv(filepath, stringsAsFactors = FALSE, sep=sep)
         if (nrow(data) == 0) {
           private$error_message <- "Файл пустой или не содержит данных"
           return(NULL)
