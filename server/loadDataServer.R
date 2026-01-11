@@ -79,18 +79,10 @@ loadDataServer <- function(id) {
       if (file.exists(sep_file)) {
         file.remove(sep_file)
       }
-      # Удаляем папку пользователя
-      if (dir.exists(session_dir())) {
-        unlink(session_dir(), recursive = TRUE)
-      }
-      # Удаляем cookie (устанавливаем пустое значение)
-      cookies::set_cookie("user_id", "", session = session)
-      # Сбрасываем user_id для новой генерации
-      user_id_rv(NULL)
       data_reactive$data <- NULL
       data_reactive$file <- NULL
       output$status <- renderUI({
-        div(style = "color: blue;", "Данные очищены.")
+        div(style = "color: blue;", "Исходные данные очищены.")
       })
     })
 
