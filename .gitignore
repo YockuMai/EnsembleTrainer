@@ -37,7 +37,7 @@ config.R
 # *.xls
 # *.rds
 # *.rda
-data/
+session_data/
 # raw_data/
 # output/
 # results/

@@ -1,4 +1,11 @@
 library(shiny)
+library(R6)
+library(caret)
+library(caretEnsemble)
+library(dplyr)
+library(future)
+library(DT)
+library(cookies)
 source("server/server.R")
 source("ui/ui.R")
 

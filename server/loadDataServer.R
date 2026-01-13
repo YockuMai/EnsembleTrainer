@@ -1,69 +1,47 @@
 source("R/dataLoader.R")
 
-loadDataServer <- function(id) {
+loadDataServer <- function(id, session_data) {
   moduleServer(id, function(input, output, session) {
     dataLoader <- DataLoader$new()
 
-    data_reactive <- reactiveValues(data = NULL, file = NULL)
-    user_id_rv <- reactiveVal(NULL)
-
-    # TODO: Сделать отдельный модуль для работы с куками и управлением папкой data
-    # Получаем или создаем постоянный user_id через cookie
-    observe({
-      if (is.null(user_id_rv())) {
-        user_id <- cookies::get_cookie("user_id", session = session)
-        if (is.null(user_id) || user_id == "") {
-          user_id <- paste0("user_", format(Sys.time(), "%Y%m%d%H%M%S"), "_", sample(9999,1))
-          cookies::set_cookie("user_id", user_id, session = session)
-        }
-        user_id_rv(user_id)
-      }
-    })
-
-    session_dir <- reactive({
-      req(user_id_rv())
-      file.path("data", user_id_rv())
-    })
-
-    # Автоматическая загрузка при запуске
-    observe({
-      req(user_id_rv())
-      csv_file <- file.path(session_dir(), "last_uploaded.csv")
-      sep_file <- file.path(session_dir(), "sep.txt")
-      if (file.exists(csv_file)) {
-        sep <- if (file.exists(sep_file)) readLines(sep_file, n=1) else ";"
-        result <- dataLoader$csvLoad(csv_file, sep = sep)
-        if (!is.null(result) && result) {
-          data_reactive$data <- dataLoader$getData()
-          data_reactive$file <- csv_file
-        }
-      }
-    })
-
     observeEvent(input$load, {
       req(input$file)
-      req(user_id_rv())
+
+      # Определяем разделитель автоматически
+      auto_sep <- dataLoader$guessSeparator(input$file$datapath)
+
+      # Используем автоматически определенный разделитель, если пользователь не указал явно
+      sep_to_use <- if (input$sep == "auto") auto_sep else input$sep
 
       # Загружаем данные
-      result <- dataLoader$csvLoad(input$file$datapath, input$sep)
+      result <- dataLoader$csvLoad(input$file$datapath, sep_to_use)
 
       if (!is.null(result) && result) {
         # Успешная загрузка
-        data_reactive$data <- dataLoader$getData()
-        # Сохраняем файл для persistence
-        dir.create(session_dir(), showWarnings = FALSE, recursive = TRUE)
-        csv_path <- file.path(session_dir(), "last_uploaded.csv")
-        sep_path <- file.path(session_dir(), "sep.txt")
-        file.copy(input$file$datapath, csv_path, overwrite = TRUE)
-        writeLines(as.character(input$sep), sep_path)
-        data_reactive$file <- csv_path
+        current_data <- session_data()
+        current_data$original_data <- dataLoader$getData()
+        session_data(current_data)
+
+        # Показываем статус с информацией об использованном разделителе
+        sep_display <- switch(sep_to_use,
+                              ";" = "точка с запятой",
+                              "," = "запятая",
+                              "\t" = "табуляция",
+                              "|" = "вертикальная черта",
+                              " " = "пробел",
+                              sep_to_use)
+
+        status_msg <- if (input$sep == "auto") {
+          paste("Данные успешно загружены! Автоматически определен разделитель:", sep_display)
+        } else {
+          paste("Данные успешно загружены с разделителем:", sep_display)
+        }
+
         output$status <- renderUI({
-          div(style = "color: green;", "Данные успешно загружены!")
+          div(style = "color: green;", status_msg)
         })
       } else {
         # Ошибка
-        data_reactive$data <- NULL
-        data_reactive$file <- NULL
         error_msg <- dataLoader$getError()
         output$status <- renderUI({
           div(style = "color: red;", paste("Ошибка:", error_msg))
@@ -72,23 +50,17 @@ loadDataServer <- function(id) {
     })
 
     observeEvent(input$clear, {
-      # Удаляем файлы
-      if (!is.null(data_reactive$file) && file.exists(data_reactive$file)) {
-        file.remove(data_reactive$file)
-      }
-      sep_file <- file.path(session_dir(), "sep.txt")
-      if (file.exists(sep_file)) {
-        file.remove(sep_file)
-      }
-      data_reactive$data <- NULL
-      data_reactive$file <- NULL
+      current_data <- session_data()
+      current_data$original_data <- NULL
+      current_data$processed_data <- NULL
+      session_data(current_data)
       output$status <- renderUI({
         div(style = "color: blue;", "Исходные данные очищены.")
       })
     })
 
     output$dataTable <- DT::renderDT({
-      data_reactive$data
+      session_data()$original_data
     })
   })
 }
