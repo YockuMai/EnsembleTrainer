@@ -4,6 +4,7 @@ source("R/sessionManager.R")
 #plan(multisession)
 
 server <- function(input, output, session) {
+
   # Создаем session_manager один раз на всю сессию
   session_manager <- SessionManager$new(session)
 
@@ -12,9 +13,7 @@ server <- function(input, output, session) {
 
   observe({
     tryCatch({
-      session_manager$init_user_id()
-      loaded_data <- session_manager$load_session_data()
-      session_data(loaded_data)
+      session_data(session_manager$load_session_data())
     }, error = function() {
       # Если не удалось загрузить, оставляем пустым
       session_data(list())

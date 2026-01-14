@@ -7,40 +7,39 @@ private = list(
   get_cookie = function(name) {
     tryCatch(
       cookies::get_cookie(name, session = private$session),
-      error = function(e) NULL
+      error = function() NULL
     )
   },
 
   # Установить куки
-  set_cookie = function(name, value, expires = NULL, path = NULL, domain = NULL, secure = NULL, same_site = NULL) {
+  set_cookie = function(name, value, expires = NULL, path = NULL, domain = NULL, same_site = NULL) {
     tryCatch(
       cookies::set_cookie(
-        name = name,
-        value = value,
-        expires = expires,
+        cookie_name = name,
+        cookie_value = value,
+        expiration = expires,
         path = path,
         domain = domain,
-        secure = secure,
         same_site = same_site,
         session = private$session
       ),
-      error = function(e) {}
+      error = function(e) cat("Error setting cookie:", e$message, "\n")
     )
   },
 
   # Удалить куки
   remove_cookie = function(name, path = NULL, domain = NULL) {
-    cookies::remove_cookie(name = name, path = path, domain = domain, session = private$session)
+    cookies::remove_cookie(cookie_name = name, path = path, domain = domain, session = private$session)
   },
 
   # Получить или создать user_id
   get_user_id = function() {
-    user_id <- private$get_cookie("user_id")
-    if (is.null(user_id) || user_id == "") {
-      user_id <- paste0("user_", format(Sys.time(), "%Y%m%d%H%M%S"), "_", sample(9999, 1))
-      private$set_cookie("user_id", user_id)
+    private$user_id <- private$get_cookie("user_id")
+    if (is.null(private$user_id) || private$user_id == "") {
+      private$user_id <- paste0("user_", format(Sys.time(), "%Y%m%d%H%M%S"), "_", sample(9999, 1))
+      private$set_cookie("user_id", private$user_id)
     }
-    return(user_id)
+    return(private$user_id)
   },
 
   # Получить путь к директории сессии пользователя
@@ -114,15 +113,6 @@ private = list(
     return(FALSE)
   },
 
-  # Получить список файлов сессии
-  list_session_files = function() {
-    session_dir <- private$get_session_dir()
-    if (dir.exists(session_dir)) {
-      return(list.files(session_dir))
-    }
-    return(character(0))
-  },
-
   # Очистить все файлы сессии
   clear_session_files = function() {
     session_dir <- private$get_session_dir()
@@ -140,15 +130,14 @@ private = list(
   public = list(
     initialize = function(session) {
       private$session <- session
-    },
-
-    # Инициализировать user_id (вызывать в reactive контексте)
-    init_user_id = function() {
-      private$user_id <- private$get_user_id()
+      private$user_id <- NULL
     },
 
     # Загрузить все сессионные данные пользователя
     load_session_data = function() {
+      if (is.null(private$user_id)) {
+        private$get_user_id()
+      }
       session_data <- list()
 
       # Загрузка оригинальных данных

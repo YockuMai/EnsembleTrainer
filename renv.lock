@@ -492,6 +492,62 @@
       "Maintainer": "Max Kuhn <mxkuhn@gmail.com>",
       "Repository": "CRAN"
     },
+    "caretEnsemble": {
+      "Package": "caretEnsemble",
+      "Version": "4.0.1",
+      "Source": "Repository",
+      "Type": "Package",
+      "Title": "Ensembles of Caret Models",
+      "Date": "2024-08-17",
+      "Authors@R": "c(person(c(\"Zachary\", \"A.\"), \"Deane-Mayer\", role = c(\"aut\", \"cre\", \"cph\"), email = \"zach.mayer@gmail.com\"), person(c(\"Jared\", \"E.\", \"Knowles\"), role=\"ctb\", email=\"jknowles@gmail.com\"), person(\"Anton\", \"Lopez\", role=\"ctb\", email=\"anton.gomez.lopez@rai.usc.es\") )",
+      "URL": "http://zachmayer.github.io/caretEnsemble/, https://github.com/zachmayer/caretEnsemble",
+      "BugReports": "https://github.com/zachmayer/caretEnsemble/issues",
+      "Description": "Functions for creating ensembles of caret models: caretList() and caretStack(). caretList() is a convenience function for fitting multiple caret::train() models to the same dataset. caretStack() will make linear or non-linear combinations of these models, using a caret::train() model as a meta-model.",
+      "Depends": [
+        "R (>= 4.1.0)"
+      ],
+      "Suggests": [
+        "MASS",
+        "caTools",
+        "covr",
+        "earth",
+        "gbm",
+        "glmnet",
+        "klaR",
+        "knitr",
+        "lintr",
+        "mgcv",
+        "mlbench",
+        "nnet",
+        "randomForest",
+        "rmarkdown",
+        "rhub",
+        "rpart",
+        "spelling",
+        "testthat",
+        "usethis"
+      ],
+      "Imports": [
+        "caret",
+        "data.table",
+        "ggplot2",
+        "lattice",
+        "methods",
+        "patchwork",
+        "pbapply",
+        "rlang"
+      ],
+      "License": "MIT + file LICENSE",
+      "VignetteBuilder": "knitr",
+      "RoxygenNote": "7.3.2",
+      "LazyData": "true",
+      "Language": "en-US",
+      "Encoding": "UTF-8",
+      "NeedsCompilation": "no",
+      "Author": "Zachary A. Deane-Mayer [aut, cre, cph], Jared E. Knowles [ctb], Anton Lopez [ctb]",
+      "Maintainer": "Zachary A. Deane-Mayer <zach.mayer@gmail.com>",
+      "Repository": "CRAN"
+    },
     "class": {
       "Package": "class",
       "Version": "7.3-23",
@@ -2414,6 +2470,78 @@
       "NeedsCompilation": "yes",
       "Author": "Henrik Bengtsson [aut, cre, cph] (ORCID: <https://orcid.org/0000-0002-7579-5165>), Mike Cheng [ctb]",
       "Maintainer": "Henrik Bengtsson <henrikb@braju.com>",
+      "Repository": "CRAN"
+    },
+    "patchwork": {
+      "Package": "patchwork",
+      "Version": "1.3.2",
+      "Source": "Repository",
+      "Type": "Package",
+      "Title": "The Composer of Plots",
+      "Authors@R": "person(given = \"Thomas Lin\", family = \"Pedersen\", role = c(\"cre\", \"aut\"), email = \"thomasp85@gmail.com\", comment = c(ORCID = \"0000-0002-5147-4711\"))",
+      "Maintainer": "Thomas Lin Pedersen <thomasp85@gmail.com>",
+      "Description": "The 'ggplot2' package provides a strong API for sequentially  building up a plot, but does not concern itself with composition of multiple plots. 'patchwork' is a package that expands the API to allow for  arbitrarily complex composition of plots by, among others, providing  mathematical operators for combining multiple plots. Other packages that try  to address this need (but with a different approach) are 'gridExtra' and  'cowplot'.",
+      "License": "MIT + file LICENSE",
+      "Encoding": "UTF-8",
+      "Imports": [
+        "ggplot2 (>= 3.0.0)",
+        "gtable (>= 0.3.6)",
+        "grid",
+        "stats",
+        "grDevices",
+        "utils",
+        "graphics",
+        "rlang (>= 1.0.0)",
+        "cli",
+        "farver"
+      ],
+      "RoxygenNote": "7.3.2",
+      "URL": "https://patchwork.data-imaginist.com, https://github.com/thomasp85/patchwork",
+      "BugReports": "https://github.com/thomasp85/patchwork/issues",
+      "Suggests": [
+        "knitr",
+        "rmarkdown",
+        "gridGraphics",
+        "gridExtra",
+        "ragg",
+        "testthat (>= 2.1.0)",
+        "vdiffr",
+        "covr",
+        "png",
+        "gt (>= 0.11.0)"
+      ],
+      "VignetteBuilder": "knitr",
+      "Config/Needs/website": "gifski",
+      "NeedsCompilation": "no",
+      "Author": "Thomas Lin Pedersen [cre, aut] (ORCID: <https://orcid.org/0000-0002-5147-4711>)",
+      "Repository": "CRAN"
+    },
+    "pbapply": {
+      "Package": "pbapply",
+      "Version": "1.7-4",
+      "Source": "Repository",
+      "Type": "Package",
+      "Title": "Adding Progress Bar to '*apply' Functions",
+      "Date": "2025-07-19",
+      "Authors@R": "c(person(given = \"Peter\", family = \"Solymos\", comment = c(ORCID = \"0000-0001-7337-1740\"), role = c(\"aut\", \"cre\"), email = \"psolymos@gmail.com\"), person(given = \"Zygmunt\", family = \"Zawadzki\", role = \"aut\", email = \"zygmunt@zstat.pl\"), person(given = \"Henrik\",  family = \"Bengtsson\",  role = \"ctb\", email = \"henrikb@braju.com\"), person(\"R Core Team\", role = c(\"cph\", \"ctb\")))",
+      "Maintainer": "Peter Solymos <psolymos@gmail.com>",
+      "Description": "A lightweight package that adds progress bar to vectorized R functions ('*apply'). The implementation can easily be added to functions where showing the progress is useful (e.g. bootstrap). The type and style of the progress bar (with percentages or remaining time) can be set through options. Supports several parallel processing backends including mirai and future.",
+      "Depends": [
+        "R (>= 3.2.0)"
+      ],
+      "Imports": [
+        "parallel"
+      ],
+      "Suggests": [
+        "shiny",
+        "future",
+        "future.apply"
+      ],
+      "License": "GPL (>= 2)",
+      "URL": "https://github.com/psolymos/pbapply, https://peter.solymos.org/pbapply/",
+      "BugReports": "https://github.com/psolymos/pbapply/issues",
+      "NeedsCompilation": "no",
+      "Author": "Peter Solymos [aut, cre] (ORCID: <https://orcid.org/0000-0001-7337-1740>), Zygmunt Zawadzki [aut], Henrik Bengtsson [ctb], R Core Team [cph, ctb]",
       "Repository": "CRAN"
     },
     "pillar": {
