@@ -41,7 +41,7 @@ session_data/
 # raw_data/
 # output/
 # results/
-
+.lintr
 # Log files
 *.log
 logs/

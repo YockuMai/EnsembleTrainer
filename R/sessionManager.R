@@ -133,84 +133,91 @@ private = list(
       private$user_id <- NULL
     },
 
-    # Загрузить все сессионные данные пользователя
+    # Универсальный метод загрузки всех сессионных данных
     load_session_data = function() {
       if (is.null(private$user_id)) {
         private$get_user_id()
       }
+
       session_data <- list()
+      session_dir <- private$get_session_dir()
 
-      # Загрузка оригинальных данных
-      if (private$has_session_file("original_data.rds")) {
-        session_data$original_data <- readRDS(private$load_session_file("original_data.rds", binary = TRUE))
-      } else {
-        session_data$original_data <- NULL
-      }
+      # Если директория сессии существует, сканируем все .rds файлы
+      if (dir.exists(session_dir)) {
+        rds_files <- list.files(session_dir, pattern = "\\.rds$", full.names = FALSE)
 
-      # Загрузка предобработанных данных
-      if (private$has_session_file("processed_data.rds")) {
-        session_data$processed_data <- readRDS(private$load_session_file("processed_data.rds", binary = TRUE))
-      } else {
-        session_data$processed_data <- NULL
-      }
+        for (file in rds_files) {
+          # Убираем расширение .rds для получения имени типа данных
+          data_type <- gsub("\\.rds$", "", file)
+          file_path <- file.path(session_dir, file)
 
-      # Загрузка моделей
-      if (private$has_session_file("models.rds")) {
-        session_data$models <- readRDS(private$load_session_file("models.rds", binary = TRUE))
-      } else {
-        session_data$models <- list()
-      }
-
-      # Загрузка параметров моделей
-      if (private$has_session_file("model_params.rds")) {
-        session_data$model_params <- readRDS(private$load_session_file("model_params.rds", binary = TRUE))
-      } else {
-        session_data$model_params <- list()
+          tryCatch({
+            session_data[[data_type]] <- readRDS(file_path)
+          }, error = function(e) {
+            warning(paste("Не удалось загрузить файл сессии:", file, "-", e$message))
+          })
+        }
       }
 
       return(session_data)
     },
 
-    # Сохранить сессионные данные пользователя
+    # Универсальный метод сохранения сессионных данных
     save_session_data = function(session_data) {
-      # Сохранение оригинальных данных
-      if (!is.null(session_data$original_data)) {
-        temp_file <- tempfile(fileext = ".rds")
-        saveRDS(session_data$original_data, temp_file)
-        private$save_session_file("original_data.rds", temp_file, binary = TRUE)
-        unlink(temp_file)
-      } else {
-        private$remove_session_file("original_data.rds")
+      if (is.null(private$user_id)) {
+        private$get_user_id()
       }
 
-      # Сохранение предобработанных данных
-      if (!is.null(session_data$processed_data)) {
-        temp_file <- tempfile(fileext = ".rds")
-        saveRDS(session_data$processed_data, temp_file)
-        private$save_session_file("processed_data.rds", temp_file, binary = TRUE)
-        unlink(temp_file)
-      } else {
-        private$remove_session_file("processed_data.rds")
+      session_dir <- private$get_session_dir()
+
+      # Создаем директорию, если не существует
+      if (!dir.exists(session_dir)) {
+        dir.create(session_dir, recursive = TRUE)
       }
 
-      # Сохранение моделей
-      if (!is.null(session_data$models) && length(session_data$models) > 0) {
-        temp_file <- tempfile(fileext = ".rds")
-        saveRDS(session_data$models, temp_file)
-        private$save_session_file("models.rds", temp_file, binary = TRUE)
-        unlink(temp_file)
+      # Получаем список текущих файлов сессии
+      current_files <- if (dir.exists(session_dir)) {
+        list.files(session_dir, pattern = "\\.rds$", full.names = FALSE)
       } else {
-        private$remove_session_file("models.rds")
+        character(0)
       }
 
-      # Сохранение параметров моделей
-      if (!is.null(session_data$model_params) && length(session_data$model_params) > 0) {
-        temp_file <- tempfile(fileext = ".rds")
-        saveRDS(session_data$model_params, temp_file)
-        private$save_session_file("model_params.rds", temp_file, binary = TRUE)
-        unlink(temp_file)
-      } else {
-        private$remove_session_file("model_params.rds")
+      # Сохраняем все элементы из session_data
+      for (data_type in names(session_data)) {
+        data_value <- session_data[[data_type]]
+
+        # Проверяем, нужно ли сохранять этот элемент
+        if (!is.null(data_value)) {
+          # Для списков проверяем, что они не пустые
+          if (is.list(data_value) && length(data_value) == 0) {
+            # Удаляем пустые списки
+            private$remove_session_file(paste0(data_type, ".rds"))
+          } else {
+            # Сохраняем данные
+            temp_file <- tempfile(fileext = ".rds")
+            tryCatch({
+              saveRDS(data_value, temp_file)
+              private$save_session_file(paste0(data_type, ".rds"), temp_file, binary = TRUE)
+            }, error = function(e) {
+              warning(paste("Не удалось сохранить сессионные данные:", data_type, "-", e$message))
+            }, finally = {
+              if (file.exists(temp_file)) {
+                unlink(temp_file)
+              }
+            })
+          }
+        } else {
+          # Удаляем файл, если данные NULL
+          private$remove_session_file(paste0(data_type, ".rds"))
+        }
+
+        # Удаляем из списка текущих файлов, чтобы потом удалить оставшиеся
+        current_files <- current_files[current_files != paste0(data_type, ".rds")]
+      }
+
+      # Удаляем файлы, которые больше не нужны (были в сессии, но больше не передаются)
+      for (old_file in current_files) {
+        private$remove_session_file(old_file)
       }
     }
   )

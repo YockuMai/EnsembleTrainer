@@ -19,8 +19,9 @@ loadDataUI <- function(id) {
     br(),
     br(),
     uiOutput(ns("status"))
-  )
+          )
     ),
+
     mainPanel(
       DT::dataTableOutput(ns("dataTable"))
     )

@@ -1,4 +1,5 @@
 source("ui/practic/loadDataUI.R")
+source("ui/practic/preprocessUI.R")
 
 practicUI <- function() {
   tabsetPanel(
@@ -6,7 +7,7 @@ practicUI <- function() {
              loadDataUI("load")
     ),
     tabPanel("Предобработка",
-
+             preprocessUI("preprocess")
     ),
     tabPanel("Параметры моделей",
              h3("Параметры моделей"),

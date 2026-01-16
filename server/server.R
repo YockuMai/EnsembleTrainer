@@ -1,4 +1,5 @@
 source("server/loadDataServer.R")
+source("server/preprocessServer.R")
 source("R/sessionManager.R")
 
 #plan(multisession)
@@ -22,6 +23,9 @@ server <- function(input, output, session) {
 
   # Загрузка данных
   loadDataServer("load", session_data)
+
+  # Предобработка данных
+  preprocessServer("preprocess", session_data)
 
   # Периодическое сохранение каждые 30 секунд
   #TODO: Изменить вреся сохранения сессионных файлов

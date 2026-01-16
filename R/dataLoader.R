@@ -48,7 +48,7 @@ DataLoader <- R6::R6Class("DataLoader",
         # Проверяем выбранный разделитель пробным чтением
         best_sep <- separators[best_sep_idx]
         test_result <- tryCatch({
-          test_data <- read.csv(filepath, sep = best_sep, nrows = 5, stringsAsFactors = FALSE)
+          test_data <- read.csv(filepath, sep = best_sep, nrows = 5, stringsAsFactors = TRUE)
           !is.null(test_data) && ncol(test_data) > 1
         }, error = function(e) {
           FALSE
@@ -63,7 +63,7 @@ DataLoader <- R6::R6Class("DataLoader",
             alt_sep <- separators[sorted_indices[i]]
             if (sep_counts[sorted_indices[i]] > 0) {
               test_result <- tryCatch({
-                test_data <- read.csv(filepath, sep = alt_sep, nrows = 5, stringsAsFactors = FALSE)
+                test_data <- read.csv(filepath, sep = alt_sep, nrows = 5, stringsAsFactors = TRUE)
                 !is.null(test_data) && ncol(test_data) > 1
               }, error = function(e) {
                 FALSE
@@ -98,7 +98,7 @@ DataLoader <- R6::R6Class("DataLoader",
           sep <- self$guessSeparator(filepath)
         }
 
-        data <- read.csv(filepath, stringsAsFactors = FALSE, sep=sep)
+        data <- read.csv(filepath, stringsAsFactors = TRUE, sep=sep)
         if (nrow(data) == 0) {
           private$error_message <- "Файл пустой или не содержит данных"
           return(NULL)
