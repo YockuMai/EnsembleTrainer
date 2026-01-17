@@ -35,6 +35,26 @@ preprocessUI <- function(id) {
       conditionalPanel(
         condition = paste0("input['", ns("preprocessing_step"), "'] == 'outliers'"),
         h3("Обработка выбросов"),
+        
+        # Статистика выбросов
+        uiOutput(ns("outliers_stats")),
+        
+        # Визуализация выбросов
+        conditionalPanel(
+          condition = "input['outliers_stats'] != null",
+          h4("Визуализация выбросов"),
+          fluidRow(
+            column(6, 
+                   h5("Boxplot для анализа выбросов"),
+                   plotOutput(ns("boxplot_outliers"), height = "300px")
+            ),
+            column(6, 
+                   h5("Scatter plot для визуализации выбросов"),
+                   plotOutput(ns("scatter_outliers"), height = "300px")
+            )
+          )
+        ),
+        
         checkboxInput(ns("handle_outliers"), "Обрабатывать выбросы", value = FALSE),
         conditionalPanel(
           condition = paste0("input['", ns("handle_outliers"), "'] == true"),
@@ -63,27 +83,6 @@ preprocessUI <- function(id) {
         checkboxGroupInput(ns("columns_to_remove"), "Столбцы для удаления:",
                           choices = NULL),
         actionButton(ns("update_columns"), "Обновить список столбцов")
-      ),
-
-      conditionalPanel(
-        condition = paste0("input['", ns("preprocessing_applied"), "'] == true"),
-        h3("Результаты предобработки"),
-        uiOutput(ns("preprocessing_status")),
-        hr(),
-        tabsetPanel(
-          tabPanel("Исходные данные",
-                   h4("Статистика исходных данных"),
-                   uiOutput(ns("original_summary")),
-                   h4("Предварительный просмотр"),
-                   DT::dataTableOutput(ns("original_data_table"))
-          ),
-          tabPanel("Обработанные данные",
-                   h4("Статистика обработанных данных"),
-                   uiOutput(ns("processed_summary")),
-                   h4("Предварительный просмотр"),
-                   DT::dataTableOutput(ns("processed_data_table"))
-          )
-        )
       )
     )
   )

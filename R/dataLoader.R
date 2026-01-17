@@ -1,17 +1,11 @@
 DataLoader <- R6::R6Class("DataLoader",
   private = list(
     data = NULL,
-    error_message = NULL
-  ),
+    error_message = NULL,
+    sep = NULL,
 
-  public = list(
-    initialize = function() {
-      # Initialization code if needed
-      private$data <- NULL
-      private$error_message <- NULL
-    },
-    # Автоматическое определение разделителя
-    guessSeparator = function(filepath) {
+     # Автоматическое определение разделителя
+      guessSeparator = function(filepath) {
       tryCatch({
         if (!file.exists(filepath)) {
           return(";")  # Возвращаем разделитель по умолчанию
@@ -25,7 +19,7 @@ DataLoader <- R6::R6Class("DataLoader",
         }
 
         # Потенциальные разделители
-        separators <- c(",", ";", "\t", "|", " ")
+        separators <- c(",", ";", "\t", "|")
         sep_counts <- c()
 
         for (sep in separators) {
@@ -50,7 +44,7 @@ DataLoader <- R6::R6Class("DataLoader",
         test_result <- tryCatch({
           test_data <- read.csv(filepath, sep = best_sep, nrows = 5, stringsAsFactors = TRUE)
           !is.null(test_data) && ncol(test_data) > 1
-        }, error = function(e) {
+        }, error = function() {
           FALSE
         })
 
@@ -77,48 +71,54 @@ DataLoader <- R6::R6Class("DataLoader",
 
         return(";")  # Возвращаем разделитель по умолчанию
 
-      }, error = function(e) {
+      }, error = function() {
         return(";")
       })
+    }
+  ),
+
+  public = list(
+    initialize = function() {
+      private$data <- NULL
+      private$error_message <- NULL
+      private$sep <- NULL
     },
 
-    csvLoad = function(filepath, sep = NULL) {
-      tryCatch({
-        if (!file.exists(filepath)) {
-          private$error_message <- "Файл не найден"
-          return(NULL)
-        }
-        if (!grepl("\\.csv$", filepath, ignore.case = TRUE)) {
-          private$error_message <- "Файл должен иметь расширение .csv"
-          return(NULL)
-        }
+    csv_load = function(filepath, sep = NULL) {
+      if (!file.exists(filepath)) {
+        private$error_message <- "Файл не найден"
+        return(FALSE)
+      }
+      if (!grepl("\\.csv$", filepath, ignore.case = TRUE)) {
+        private$error_message <- "Файл должен иметь расширение .csv"
+        return(FALSE)
+      }
 
-        # Если разделитель не указан, определяем автоматически
-        if (is.null(sep)) {
-          sep <- self$guessSeparator(filepath)
-        }
+      # Если разделитель не указан, определяем автоматически
+      if (is.null(sep)) {
+        sep <- private$guessSeparator(filepath)
+        private$sep <- sep
+      }
+      else {
+        private$sep <- sep
+      }
 
-        data <- read.csv(filepath, stringsAsFactors = TRUE, sep=sep)
-        if (nrow(data) == 0) {
-          private$error_message <- "Файл пустой или не содержит данных"
-          return(NULL)
-        }
-        private$data <- data
-        private$error_message <- NULL
-        return(TRUE)
-      }, error = function(e) {
-        private$error_message <- paste("Ошибка при загрузке файла:", e$message)
-        return(NULL)
-      })
+      private$data <- read.csv(filepath, stringsAsFactors = TRUE, sep=private$sep)
+      if (nrow(private$data) == 0) {
+        private$error_message <- "Файл пустой или не содержит данных"
+        return(FALSE)
+      }
+      private$error_message <- NULL
+      return(TRUE)
     },
-    getData = function() {
+    get_data = function() {
       return(private$data)
     },
-    getError = function() {
+    get_error = function() {
       return(private$error_message)
     },
-    hasData = function() {
-      return(!is.null(private$data))
+    get_sep = function() {
+      return(private$sep)
     }
   )
 )
