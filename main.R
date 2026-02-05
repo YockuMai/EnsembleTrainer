@@ -3,7 +3,7 @@ library(R6)
 library(caret)
 library(caretEnsemble)
 library(dplyr)
-library(future)
+#library(future)
 library(DT)
 library(cookies)
 source("server/server.R")
@@ -11,5 +11,7 @@ source("ui/ui.R")
 
 options(shiny.host = "127.0.0.1")
 options(shiny.port = 6698)
+
+options(shiny.reactlog = TRUE)
 
 shinyApp(ui = ui, server = server)

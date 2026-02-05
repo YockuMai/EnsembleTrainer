@@ -1,89 +1,79 @@
 preprocessUI <- function(id) {
   ns <- NS(id)
-  sidebarLayout(
-    sidebarPanel(
-      width = 3,
-      radioButtons(ns("preprocessing_step"), "",
-                   choices = c("Пропущенные значения" = "missing",
-                               "Выбросы" = "outliers",
-                               "Масштабирование" = "scaling",
-                               "Выбор признаков" = "features"),
-                   selected = "missing"),
-      hr(),
-      actionButton(ns("apply_preprocessing"), "Применить",
-                  class = "btn-primary btn-block"),
-      actionButton(ns("reset_preprocessing"), "Сбросить",
-                  class = "btn-secondary btn-block")
-    ),
+  navlistPanel(
+    widths = c(2, 10),  # Ширина левой панели и правой
+    tabPanel("Просмотр данных",
+      tabsetPanel(type = "pills",
+      
+        tabPanel("Просмотр",
+        #TODO: Предобработанные данные и их summary
+          h4("Предобработанные данные"),
+          DT::dataTableOutput(ns("data_overview")),
 
-    mainPanel(
-      width = 9,
-      conditionalPanel(
-        condition = paste0("input['", ns("preprocessing_step"), "'] == 'missing'"),
-        h3("Обработка пропущенных значений"),
-        uiOutput(ns("missing_stats")),
-        checkboxInput(ns("handle_missing"), "Обрабатывать пропущенные значения", value = FALSE),
-        conditionalPanel(
-          condition = paste0("input['", ns("handle_missing"), "'] == true"),
-          selectInput(ns("missing_method"), "Метод обработки:",
-                     choices = c("Среднее (заполнение)" = "mean",
-                                 "Удалить строки" = "delete"),
-                     selected = "mean")
-        )
-      ),
-
-      conditionalPanel(
-        condition = paste0("input['", ns("preprocessing_step"), "'] == 'outliers'"),
-        h3("Обработка выбросов"),
-        
-        # Статистика выбросов
-        uiOutput(ns("outliers_stats")),
-        
-        # Визуализация выбросов
-        conditionalPanel(
-          condition = "input['outliers_stats'] != null",
-          h4("Визуализация выбросов"),
-          fluidRow(
-            column(6, 
-                   h5("Boxplot для анализа выбросов"),
-                   plotOutput(ns("boxplot_outliers"), height = "300px")
-            ),
-            column(6, 
-                   h5("Scatter plot для визуализации выбросов"),
-                   plotOutput(ns("scatter_outliers"), height = "300px")
-            )
-          )
+          h4("Статистика по признакам"),
+          htmlOutput(ns("data_summary"))
         ),
-        
-        checkboxInput(ns("handle_outliers"), "Обрабатывать выбросы", value = FALSE),
-        conditionalPanel(
-          condition = paste0("input['", ns("handle_outliers"), "'] == true"),
-          selectInput(ns("outlier_method"), "Метод обработки:",
-                     choices = c("Заменить границами" = "replace",
-                                 "Удалить" = "remove"),
-                     selected = "replace"),
-          numericInput(ns("iqr_multiplier"), "Множитель IQR:",
-                      value = 1.5, min = 1, max = 3, step = 0.1)
+
+        tabPanel("Смена типа признаков",
+          h4("Числовые признаки"),
+          actionButton(ns("make_categorical"), "Сделать категориальными"),
+          checkboxGroupInput(ns("numeric_cols_selected"), "Выберите столбцы:", choices = NULL),
+
+          h4("Категориальные признаки"),
+          actionButton(ns("make_numeric"), "Сделать числовыми"),
+          checkboxGroupInput(ns("factor_cols_selected"), "Выберите столбцы:", choices = NULL),
+
+          h4("Признаки с неопределённым типом"),
+          actionButton(ns("make_categorical_no_type"), "Сделать категориальными"),
+          actionButton(ns("make_numeric_no_type"), "Сделать числовыми"),
+          checkboxGroupInput(ns("no_type_cols_selected"), "Выберите столбцы:", choices = NULL)
+        ),
+
+        tabPanel("Переименование столбцов",
+        #TODO: Список полей с уже забитыми столбцами 
+          verbatimTextOutput(ns("data_rename"))
+        ),
+
+        tabPanel("Удаление столбцов",
+        #TODO: Список столбцов с крестиками
+          verbatimTextOutput(ns("data_remove"))
         )
-      ),
-
-      conditionalPanel(
-        condition = paste0("input['", ns("preprocessing_step"), "'] == 'scaling'"),
-        h3("Масштабирование данных"),
-        radioButtons(ns("scaling_method"), "Метод масштабирования:",
-                   choices = c("Без масштабирования" = "none",
-                               "Нормализация (0-1)" = "normalize",
-                               "Стандартизация (z-score)" = "standardize"),
-                   selected = "none")
-      ),
-
-      conditionalPanel(
-        condition = paste0("input['", ns("preprocessing_step"), "'] == 'features'"),
-        h3("Выбор признаков"),
-        checkboxGroupInput(ns("columns_to_remove"), "Столбцы для удаления:",
-                          choices = NULL),
-        actionButton(ns("update_columns"), "Обновить список столбцов")
       )
+    ),
+    
+    tabPanel("Обработка пропусков",
+             h3("Обработка пропущенных значений"),
+             # Содержимое для пропусков
+             textOutput(ns("missing_info")),
+             selectInput(ns("missing_method"), "Метод:",
+                        choices = c("Замена средним/модой" = "mean",
+                                   "Удаление строк" = "delete")),
+             actionButton(ns("clear_missing"), "Применить")
+    ),
+    
+    tabPanel("Обработка выбросов",
+            fluidRow(
+              column(8, h3("Обработка выбросов")),
+              column(4, div(style = "", 
+                              actionButton(ns("clear_outliers"), "Применить")))
+            ),
+             # Содержимое для выбросов
+            textOutput(ns("outliers_info")),
+            selectInput(ns("outlier_method"), "Метод:",
+                        choices = c("Замена границами" = "replace",
+                                   "Удаление строк" = "delete"))
+    ),
+    
+    tabPanel("Масштабирование",
+             h3("Масштабирование данных"),
+             # Содержимое для масштабирования
+             textOutput(ns("scaling_info")),
+             selectInput(ns("scaling_method"), "Метод:",
+                        choices = c("Нормализация (0-1)" = "normalize",
+                                   "Стандартизация (z-score)" = "standardize",
+                                   "Отмена масштабирования" = "denormalize")),
+             actionButton(ns("apply_scaling"), "Применить")
     )
   )
+  
 }

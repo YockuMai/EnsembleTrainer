@@ -1,9 +1,5 @@
 DataLoader <- R6::R6Class("DataLoader",
   private = list(
-    data = NULL,
-    error_message = NULL,
-    sep = NULL,
-
      # Автоматическое определение разделителя
       guessSeparator = function(filepath) {
       tryCatch({
@@ -78,47 +74,29 @@ DataLoader <- R6::R6Class("DataLoader",
   ),
 
   public = list(
-    initialize = function() {
-      private$data <- NULL
-      private$error_message <- NULL
-      private$sep <- NULL
-    },
+    initialize = function() {},
 
-    csv_load = function(filepath, sep = NULL) {
+    csv_load = function(filepath, sep = NULL, stringsAsFactors = FALSE) {
       if (!file.exists(filepath)) {
-        private$error_message <- "Файл не найден"
-        return(FALSE)
+        stop("Файл не найден")
       }
       if (!grepl("\\.csv$", filepath, ignore.case = TRUE)) {
-        private$error_message <- "Файл должен иметь расширение .csv"
-        return(FALSE)
+        stop("Файл должен иметь расширение .csv")
       }
 
       # Если разделитель не указан, определяем автоматически
-      if (is.null(sep)) {
+      if (is.null(sep))
         sep <- private$guessSeparator(filepath)
-        private$sep <- sep
-      }
-      else {
-        private$sep <- sep
-      }
 
-      private$data <- read.csv(filepath, stringsAsFactors = TRUE, sep=private$sep)
-      if (nrow(private$data) == 0) {
-        private$error_message <- "Файл пустой или не содержит данных"
-        return(FALSE)
+      data <- read.csv(filepath, sep = sep, stringsAsFactors = stringsAsFactors)
+      if (nrow(data) == 0) {
+        stop("Файл пустой или не содержит данных")
       }
-      private$error_message <- NULL
-      return(TRUE)
-    },
-    get_data = function() {
-      return(private$data)
-    },
-    get_error = function() {
-      return(private$error_message)
-    },
-    get_sep = function() {
-      return(private$sep)
+      return(list(
+        success = TRUE,
+        data = data,
+        sep = sep
+      ))
     }
   )
 )

@@ -6,8 +6,8 @@ private = list(
   # Получить куки по имени
   get_cookie = function(name) {
     tryCatch(
-      cookies::get_cookie(name, session = private$session),
-      error = function() NULL
+      cookies::get_cookie(cookie_name = name, session = private$session),
+      error = function(e) NULL
     )
   },
 

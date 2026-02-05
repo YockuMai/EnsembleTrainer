@@ -1,481 +1,516 @@
 PreprocessData <- R6::R6Class("PreprocessData",
   private = list(
     data = NULL,
-    numeric_cols = NULL,
-    factor_cols = NULL,
-    min = list(),
-    max = list(),
-    Q1 = list(),
-    Q3 = list(),
-    mean = list(),
-    moda = list(),
-    scaling_type = "none",
-    original_params = list(),
-    stat_fields = c("min", "max", "Q1", "Q3", "mean", "moda"),
-    detect_functions = list(),
 
-    # Вспомогательная функция для определения числовых столбцов
-    detect_numeric_columns = function() {
-      numeric_cols <- sapply(private$data, function(col) {
-        is.numeric(col) || is.integer(col)
-      })
-      private$numeric_cols <- names(private$data)[numeric_cols]
+    # типы колонок (всегда актуальные после вызова detect_columns)
+    numeric_cols = character(0),
+    factor_cols  = character(0),
+    no_type_cols = character(0),
+
+    # статистики храним как именованные списки: stats$min[[col]], stats$moda[[col]] и т.д.
+    stats = list(
+      min = list(),
+      max = list(),
+      Q1  = list(),
+      Q3  = list(),
+      mean = list(),
+      moda = list()
+    ),
+
+    scaling_type = "none",         # "none", "normalized", "standardized"
+    original_params = list(),      # для denormalize/standardize: min/max или mean/sd
+
+    ### ---------- HELPERS ----------
+
+    safe_all_na = function(x) {
+      # TRUE если все значения NA (или длина 0)
+      if (is.factor(x)) x <- as.character(x)
+      all(is.na(x))
     },
 
-    # Вспомогательная функция для определения категориальных столбцов
-    detect_factor_columns = function() {
-      factor_cols <- sapply(private$data, function(col) {
-        is.factor(col) || (is.character(col) && length(unique(col)) < sqrt(nrow(private$data)))
-      })
-      private$factor_cols <- names(private$data)[factor_cols]
+    detect_columns = function() {
+      cols <- names(private$data)
+      private$numeric_cols <- cols[vapply(private$data, function(col) is.numeric(col) || is.integer(col), logical(1))]
+      private$factor_cols  <- cols[vapply(private$data, is.factor, logical(1))]
+      private$no_type_cols <- setdiff(cols, c(private$numeric_cols, private$factor_cols))
     },
 
-    detect_min_values = function() {
-      mins <- list()
+    compute_numeric_stats = function(cols = private$numeric_cols) {
+      if (length(cols) == 0) return(invisible(NULL))
 
-      for (col_name in private$numeric_cols) {
-        col_data <- private$data[[col_name]]
-        mins[[col_name]] <- min(col_data, na.rm = TRUE)
-      }
+      # min / max / mean / Q1 / Q3 — vapply по колонкам (векторно по колонкам)
+      mins <- setNames(vapply(cols, function(cn) {
+        vec <- private$data[[cn]]
+        if (private$safe_all_na(vec)) NA_real_ else min(vec, na.rm = TRUE)
+      }, numeric(1)), cols)
 
-      private$min <- mins
+      maxs <- setNames(vapply(cols, function(cn) {
+        vec <- private$data[[cn]]
+        if (private$safe_all_na(vec)) NA_real_ else max(vec, na.rm = TRUE)
+      }, numeric(1)), cols)
+
+      means <- setNames(vapply(cols, function(cn) {
+        vec <- private$data[[cn]]
+        if (private$safe_all_na(vec)) NA_real_ else mean(vec, na.rm = TRUE)
+      }, numeric(1)), cols)
+
+      Q1s <- setNames(vapply(cols, function(cn) {
+        vec <- private$data[[cn]]
+        if (private$safe_all_na(vec)) NA_real_ else as.numeric(quantile(vec, probs = 0.25, na.rm = TRUE, type = 7))
+      }, numeric(1)), cols)
+
+      Q3s <- setNames(vapply(cols, function(cn) {
+        vec <- private$data[[cn]]
+        if (private$safe_all_na(vec)) NA_real_ else as.numeric(quantile(vec, probs = 0.75, na.rm = TRUE, type = 7))
+      }, numeric(1)), cols)
+
+      # сохраняем в списки (замена/дополнение только по cols)
+      private$stats$min[cols] <- as.list(mins)
+      private$stats$max[cols] <- as.list(maxs)
+      private$stats$mean[cols] <- as.list(means)
+      private$stats$Q1[cols]  <- as.list(Q1s)
+      private$stats$Q3[cols]  <- as.list(Q3s)
     },
 
-    detect_max_values = function() {
-      maxs <- list()
+    compute_factor_stats = function(cols = private$factor_cols) {
+      if (length(cols) == 0) return(invisible(NULL))
 
-      for (col_name in private$numeric_cols) {
-        col_data <- private$data[[col_name]]
-        maxs[[col_name]] <- max(col_data, na.rm = TRUE)
-      }
+      modas <- setNames(vapply(cols, function(cn) {
+        col <- private$data[[cn]]
+        # работаем с вектором значений без NA
+        charv <- as.character(col)
+        charv <- charv[!is.na(charv)]
+        if (length(charv) == 0) return(NA_character_)
+        ux <- unique(charv)
+        ux[which.max(tabulate(match(charv, ux)))]
+      }, character(1)), cols)
 
-      private$max <- maxs
+      private$stats$moda[cols] <- as.list(modas)
     },
 
-    detect_Q1_values = function() {
-      q1s <- list()
-
-      for (col_name in private$numeric_cols) {
-        col_data <- private$data[[col_name]]
-        q1s[[col_name]] <- quantile(col_data, 0.25, na.rm = TRUE)
-      }
-
-      private$Q1 <- q1s
-    },
-
-    detect_Q3_values = function() {
-      q3s <- list()
-
-      for (col_name in private$numeric_cols) {
-        col_data <- private$data[[col_name]]
-        q3s[[col_name]] <- quantile(col_data, 0.75, na.rm = TRUE)
-      }
-
-      private$Q3 <- q3s
-    },
-
-    detect_mean_values = function() {
-      means <- list()
-
-      for (col_name in private$numeric_cols) {
-        col_data <- private$data[[col_name]]
-        means[[col_name]] <- mean(col_data, na.rm = TRUE)
-      }
-
-      private$mean <- means
-    },
-
-    detect_moda_values = function() {
-      modas <- list()
-
-      for (col_name in private$factor_cols) {
-        col_data <- private$data[[col_name]]
-    
-        # Удаляем NA для корректного подсчета
-        valid_data <- na.omit(col_data)
-    
-        if (length(valid_data) > 0) {
-          # Создаем таблицу частот
-          freq_table <- table(valid_data)
-      
-          # Находим значение с максимальной частотой
-          # Если несколько значений имеют одинаковую максимальную частоту,
-          # выбираем первое
-          moda <- names(freq_table)[which.max(freq_table)]
-          modas[[col_name]] <- moda
-        } else {
-          # Если все значения NA, устанавливаем NA
-          modas[[col_name]] <- NA
-        }
-      }
-
-      private$moda <- modas
-    },
-
-    calculate_statistic = function() {
-      for (func_name in private$detect_functions) {
-        private[[func_name]]()
-      }
-    },
-
-    get_missing_mask = function(col_data) {
-      if (is.numeric(col_data) || is.integer(col_data)) {
-        return(is.na(col_data))
+    calculate_stats = function(cols = NULL) {
+      # Если cols == NULL — пересчитываем всё
+      if (is.null(cols)) {
+        private$compute_numeric_stats(private$numeric_cols)
+        private$compute_factor_stats(private$factor_cols)
       } else {
-        col_char <- as.character(col_data)
-        return(is.na(col_char) | 
-               col_char == "" | 
-               col_char == "N/A" | 
-               col_char == "NULL" | 
-               col_char == "NA" | 
-               col_char == "null" | 
-               col_char == "n/a")
-        }
-    },
-
-    find_missing_rows = function() {
-      rows_with_missing <- integer(nrow(private$data))
-
-      for (col_name in names(private$data)) {
-        col_data <- private$data[[col_name]]
-        missing_mask <- private$get_missing_mask(col_data)
-        rows_with_missing[missing_mask] <- 1
+        # пересчитываем только указанные колонки (поддерживаются частично numeric/factor)
+        numeric_cols <- intersect(cols, private$numeric_cols)
+        factor_cols  <- intersect(cols, private$factor_cols)
+        if (length(numeric_cols) > 0) private$compute_numeric_stats(numeric_cols)
+        if (length(factor_cols)  > 0) private$compute_factor_stats(factor_cols)
       }
-
-      return(rows_with_missing)
     },
 
-    get_outlier_bounds = function(col_name, iqr_multiplier = 1.5) {
-      q1 <- private$Q1[[col_name]]
-      q3 <- private$Q3[[col_name]]
-      iqr <- q3 - q1
+    get_missing_mask_single = function(col) {
+      # вернёт логический вектор длины nrow(private$data)
+      if (is.numeric(col) || is.integer(col)) {
+        return(is.na(col))
+      } else {
+        # фактор/character/прочее — считаем пустые строки и варианты "NA"/"N/A" и т.п. за пропуск
+        # сначала привести к character (факторы — безопасно)
+        ch <- as.character(col)
+        return(is.na(ch) | ch == "" | ch %in% c("N/A", "NULL", "NA", "null", "n/a"))
+      }
+    },
 
-      lower_bound <- q1 - iqr_multiplier * iqr
-      upper_bound <- q3 + iqr_multiplier * iqr
-
-      return(list(lower = lower_bound, upper = upper_bound))
+    # вспомогательная функция: переименовать ключи в списках статистик/ориг. параметрах
+    rename_in_named_list = function(lst, old, new) {
+      if (length(lst) == 0) return(lst)
+      # если ключ old есть, перенести в new
+      if (!is.null(lst[[old]])) {
+        lst[[new]] <- lst[[old]]
+        lst[[old]] <- NULL
+      }
+      lst
     }
   ),
 
   public = list(
+    ### ---------- Инициализация ----------
     initialize = function(data) {
-      private$detect_functions <- paste0("detect_", private$stat_fields, "_values")
+      if (!is.data.frame(data)) stop("PreprocessData: data должен быть data.frame")
       private$data <- data
-      private$detect_numeric_columns()
-      private$detect_factor_columns()
-      private$calculate_statistic()
+      private$detect_columns()
+      private$calculate_stats()   # полный пересчет при инициализации
     },
 
+    ### ---------- Доступ к данным и мета ----------
     get_data = function() {
-      return(private$data)
+      private$data
     },
 
-    get_statistic = function() {
-      result <- list()
-      for (field in private$stat_fields) {
-        result[[field]] <- private[[field]]
-      }
-      return(result)
+    get_summary = function() {
+      # вернёт стандартный summary() — можно оставить как есть
+      summary(private$data)
     },
+
+    get_numeric_columns = function() private$numeric_cols,
+    get_factor_columns  = function() private$factor_cols,
+    get_no_type_columns = function() private$no_type_cols,
+
+    get_scaling_type = function() private$scaling_type,
+
+    get_statistic = function() private$stats,
 
     get_missing_statistic = function() {
       if (is.null(private$data) || nrow(private$data) == 0) {
-        return(list(count = 0, percentage = 0))
+        return(list(rows = 0, count = 0, percentage = 0))
       }
 
+      # Собираем маски пропусков для всех колонок в матрицу (vapply быстрый по колонкам)
+      masks <- vapply(private$data, private$get_missing_mask_single, logical(nrow(private$data)))
+      # Если только одна колонка, vapply вернёт вектор, приведём к матрице
+      if (is.vector(masks)) masks <- matrix(masks, ncol = 1)
+
+      rows_with_missing <- rowSums(masks, na.rm = TRUE) > 0
       total_rows <- nrow(private$data)
-      rows_with_missing <- private$find_missing_rows()
-
       count <- sum(rows_with_missing)
-      percentage <- (count / total_rows) * 100
+      percentage <- if (total_rows > 0) round((count / total_rows) * 100, 2) else 0
 
-      return(list(
-        rows = total_rows,
-        count = count,
-        percentage = round(percentage, 2)
-      ))
+      list(rows = total_rows, count = count, percentage = percentage)
     },
 
+    ### ---------- Пропуски ----------
     clear_missing = function(method = "mean") {
+      # method: "delete" или "mean"
+      if (is.null(private$data) || nrow(private$data) == 0) return(invisible(NULL))
+
       if (method == "delete") {
-        # Удаление строк с пропущенными значениями
-        rows_with_missing <- private$find_missing_rows()
-
-        # Оставляем только строки без пропусков
-        private$data <- private$data[rows_with_missing == 0, , drop = FALSE]
-
+        masks <- vapply(private$data, private$get_missing_mask_single, logical(nrow(private$data)))
+        if (is.vector(masks)) masks <- matrix(masks, ncol = 1)
+        rows_with_missing <- rowSums(masks, na.rm = TRUE) > 0
+        private$data <- private$data[!rows_with_missing, , drop = FALSE]
+        # обновляем мета
+        private$detect_columns()
+        private$calculate_stats()
+        return(invisible(NULL))
       } else if (method == "mean") {
-        # Замена пропущенных значений
+        # numeric -> mean, factor -> moda
+        # используем уже посчитанные stats (если их нет, пересчитать)
+        private$calculate_stats(c(private$numeric_cols, private$factor_cols))
 
-        # Обработка числовых столбцов - замена на среднее
-        for (col_name in private$numeric_cols) {
-          col_data <- private$data[[col_name]]
-          missing_mask <- private$get_missing_mask(col_data)
-
-          if (any(missing_mask)) {
-            mean_val <- private$mean[[col_name]]
-            private$data[[col_name]][missing_mask] <- mean_val
+        # числовые колонны
+        for (cn in private$numeric_cols) {
+          vec <- private$data[[cn]]
+          mask <- private$get_missing_mask_single(vec)
+          if (any(mask, na.rm = TRUE)) {
+            mean_val <- private$stats$mean[[cn]]
+            # если mean_val NA (все значения NA), пропускаем
+            if (!is.na(mean_val)) private$data[[cn]][mask] <- mean_val
           }
         }
 
-        # Обработка категориальных столбцов - замена на моду
-        for (col_name in private$factor_cols) {
-          col_data <- private$data[[col_name]]
-          missing_mask <- private$get_missing_mask(col_data)
-
-          if (any(missing_mask)) {
-            most_frequent <- private$moda[[col_name]]
-            private$data[[col_name]][missing_mask] <- most_frequent
+        # факторные колонны
+        for (cn in private$factor_cols) {
+          vec <- private$data[[cn]]
+          mask <- private$get_missing_mask_single(vec)
+          if (any(mask, na.rm = TRUE)) {
+            most_freq <- private$stats$moda[[cn]]
+            if (!is.na(most_freq)) {
+              # Убедимся, что уровень присутствует для фактора
+              if (is.factor(private$data[[cn]])) {
+                if (!(most_freq %in% levels(private$data[[cn]]))) {
+                  levels(private$data[[cn]]) <- c(levels(private$data[[cn]]), most_freq)
+                }
+                private$data[[cn]][mask] <- most_freq
+              } else {
+                private$data[[cn]][mask] <- most_freq
+              }
+            }
           }
         }
+
+        # после замены пересчитаем статистику только для затронутых столбцов
+        cols_touched <- c(private$numeric_cols, private$factor_cols)
+        private$detect_columns()
+        private$calculate_stats(cols_touched)
+        return(invisible(NULL))
+      } else {
+        stop("clear_missing: неизвестный method (use 'delete' or 'mean')")
       }
-
-      # После обработки обновляем статистику
-      private$calculate_statistic()
     },
 
+    ### ---------- Выбросы ----------
     get_outliers_statistic = function(iqr_multiplier = 1.5) {
       if (length(private$numeric_cols) == 0) {
-        return(list(
-          total_outliers = 0,
-          numeric_columns = character(0),
-          outliers_by_column = list()
-        ))
+        return(list(total_outliers = 0, numeric_columns = character(0), outliers_by_column = list()))
       }
+
+      # убедимся, что Q1 и Q3 рассчитаны
+      private$calculate_stats(private$numeric_cols)
 
       outliers_by_column <- list()
       total_outliers <- 0
 
-      for (col_name in private$numeric_cols) {
-        col_data <- private$data[[col_name]]
-        bounds <- private$get_outlier_bounds(col_name, iqr_multiplier)
+      for (cn in private$numeric_cols) {
+        vec <- private$data[[cn]]
+        q1 <- private$stats$Q1[[cn]]
+        q3 <- private$stats$Q3[[cn]]
+        if (is.null(q1) || is.null(q3) || is.na(q1) || is.na(q3)) next
+        iqr <- q3 - q1
+        lower <- q1 - iqr_multiplier * iqr
+        upper <- q3 + iqr_multiplier * iqr
 
-        # Находим выбросы
-        outliers_mask <- col_data < bounds$lower | col_data > bounds$upper
-        count_outliers <- sum(outliers_mask, na.rm = TRUE)
-
-        if (count_outliers > 0) {
-          percentage <- round((count_outliers / length(col_data)) * 100, 2)
-          outliers_by_column[[col_name]] <- list(
-            count = count_outliers,
-            percentage = percentage
-          )
-          total_outliers <- total_outliers + count_outliers
+        # mask: TRUE где выброс (NA не считаем выбросом)
+        mask <- (!is.na(vec)) & (vec < lower | vec > upper)
+        cnt <- sum(mask, na.rm = TRUE)
+        if (cnt > 0) {
+          pct <- round((cnt / length(vec)) * 100, 2)
+          outliers_by_column[[cn]] <- list(count = cnt, percentage = pct, lower = lower, upper = upper)
+          total_outliers <- total_outliers + cnt
         }
       }
 
-      return(list(
-        total_outliers = total_outliers,
-        numeric_columns = private$numeric_cols,
-        outliers_by_column = outliers_by_column
-      ))
+      list(total_outliers = total_outliers, numeric_columns = private$numeric_cols, outliers_by_column = outliers_by_column)
     },
 
     clear_outliers = function(method = "replace", iqr_multiplier = 1.5) {
-      if (length(private$numeric_cols) == 0) {
-        return()
-      }
+      if (length(private$numeric_cols) == 0) return(invisible(NULL))
+
+      private$calculate_stats(private$numeric_cols)
 
       if (method == "delete") {
-        # Удаление строк с выбросами
-        rows_to_keep <- rep(TRUE, nrow(private$data))
+        # создаём объединённую маску строк с хотя бы одним выбросом
+        n <- nrow(private$data)
+        if (n == 0) return(invisible(NULL))
+        rows_to_remove <- rep(FALSE, n)
 
-        for (col_name in private$numeric_cols) {
-          col_data <- private$data[[col_name]]
-          bounds <- private$get_outlier_bounds(col_name, iqr_multiplier)
-
-          # Отмечаем строки с выбросами для удаления
-          outlier_mask <- col_data < bounds$lower | col_data > bounds$upper
-          rows_to_keep[outlier_mask] <- FALSE
+        for (cn in private$numeric_cols) {
+          vec <- private$data[[cn]]
+          q1 <- private$stats$Q1[[cn]]; q3 <- private$stats$Q3[[cn]]
+          if (is.null(q1) || is.null(q3) || is.na(q1) || is.na(q3)) next
+          iqr <- q3 - q1
+          lower <- q1 - iqr_multiplier * iqr
+          upper <- q3 + iqr_multiplier * iqr
+          mask <- (!is.na(vec)) & (vec < lower | vec > upper)
+          rows_to_remove <- rows_to_remove | mask
         }
 
-        # Удаляем строки с выбросами
-        private$data <- private$data[rows_to_keep, , drop = FALSE]
+        if (any(rows_to_remove)) {
+          private$data <- private$data[!rows_to_remove, , drop = FALSE]
+          private$detect_columns()
+          private$calculate_stats()
+        }
 
       } else if (method == "replace") {
-        # Замена выбросов на граничные значения
+        # заменяем выбросы на граничные значения (clamping)
+        for (cn in private$numeric_cols) {
+          vec <- private$data[[cn]]
+          q1 <- private$stats$Q1[[cn]]; q3 <- private$stats$Q3[[cn]]
+          if (is.null(q1) || is.null(q3) || is.na(q1) || is.na(q3)) next
+          iqr <- q3 - q1
+          lower <- q1 - iqr_multiplier * iqr
+          upper <- q3 + iqr_multiplier * iqr
 
-        for (col_name in private$numeric_cols) {
-          col_data <- private$data[[col_name]]
-          bounds <- private$get_outlier_bounds(col_name, iqr_multiplier)
-
-          # Заменяем выбросы
-          private$data[[col_name]] <- ifelse(
-            col_data < bounds$lower, 
-            bounds$lower, 
-            ifelse(col_data > bounds$upper, bounds$upper, col_data)
-          )
+          # pmax/pmin векторные и сохраняют NA
+          # заменим значения ниже lower на lower, выше upper на upper
+          newvec <- pmin(pmax(vec, lower), upper)
+          private$data[[cn]] <- newvec
         }
+        private$calculate_stats(private$numeric_cols)
+      } else {
+        stop("clear_outliers: неизвестный method (use 'delete' or 'replace')")
       }
 
-      # После обработки обновляем статистику
-      private$calculate_statistic()
+      invisible(NULL)
     },
 
+    ### ---------- Масштабирование ----------
     normalize = function() {
-      if (length(private$numeric_cols) == 0 || private$scaling_type != "none") {
-        return()
-      }
+      if (length(private$numeric_cols) == 0 || private$scaling_type != "none") return(invisible(NULL))
 
-      private$original_params$min <- private$min
-      private$original_params$max <- private$max
+      # сохраняем оригинальные min/max
+      private$calculate_stats(private$numeric_cols)
+      private$original_params$min <- private$stats$min[private$numeric_cols]
+      private$original_params$max <- private$stats$max[private$numeric_cols]
 
-      for (col_name in private$numeric_cols) {
-        col_data <- private$data[[col_name]]
-        min_val <- private$min[[col_name]]
-        max_val <- private$max[[col_name]]
-
-        if (max_val > min_val) {
-          private$data[[col_name]] <- (col_data - min_val) / (max_val - min_val)
+      for (cn in private$numeric_cols) {
+        vec <- private$data[[cn]]
+        minv <- private$original_params$min[[cn]]
+        maxv <- private$original_params$max[[cn]]
+        if (is.na(minv) || is.na(maxv) || maxv == minv) {
+          # если нет разброса — заполняем нулями (или оставляем как NA — выбрано 0)
+          private$data[[cn]] <- ifelse(is.na(vec), NA_real_, 0)
+        } else {
+          private$data[[cn]] <- (vec - minv) / (maxv - minv)
         }
       }
 
       private$scaling_type <- "normalized"
-      private$calculate_statistic()
+      private$calculate_stats(private$numeric_cols)
+      invisible(NULL)
     },
 
     standardize = function() {
-      if (length(private$numeric_cols) == 0 || private$scaling_type != "none") {
-        return()
-      }
+      if (length(private$numeric_cols) == 0 || private$scaling_type != "none") return(invisible(NULL))
 
-      private$original_params$mean <- private$mean
-      private$original_params$sd <- list()
+      # сохраняем оригинальные mean/sd
+      private$calculate_stats(private$numeric_cols)
+      means <- setNames(vapply(private$numeric_cols, function(cn) {
+        vec <- private$data[[cn]]; if (private$safe_all_na(vec)) NA_real_ else mean(vec, na.rm = TRUE)
+      }, numeric(1)), private$numeric_cols)
 
-      for (col_name in private$numeric_cols) {
-        col_data <- private$data[[col_name]]
-        mean_val <- private$mean[[col_name]]
-        sd_val <- sd(col_data, na.rm = TRUE)
+      sds <- setNames(vapply(private$numeric_cols, function(cn) {
+        vec <- private$data[[cn]]; if (private$safe_all_na(vec)) NA_real_ else sd(vec, na.rm = TRUE)
+      }, numeric(1)), private$numeric_cols)
 
-        private$original_params$sd[[col_name]] <- sd_val
+      private$original_params$mean <- as.list(means)
+      private$original_params$sd   <- as.list(sds)
 
-        if (sd_val > 0) {
-          private$data[[col_name]] <- (col_data - mean_val) / sd_val
+      for (cn in private$numeric_cols) {
+        vec <- private$data[[cn]]
+        meanv <- private$original_params$mean[[cn]]
+        sdv   <- private$original_params$sd[[cn]]
+        if (is.na(meanv) || is.na(sdv) || sdv == 0) {
+          private$data[[cn]] <- ifelse(is.na(vec), NA_real_, 0)
+        } else {
+          private$data[[cn]] <- (vec - meanv) / sdv
         }
       }
 
       private$scaling_type <- "standardized"
-      private$calculate_statistic()
+      private$calculate_stats(private$numeric_cols)
+      invisible(NULL)
     },
 
     denormalize = function() {
-      if (length(private$numeric_cols) == 0 || private$scaling_type == "none") {
-        return()
-      }
+      if (length(private$numeric_cols) == 0 || private$scaling_type == "none") return(invisible(NULL))
 
       if (private$scaling_type == "normalized") {
-        for (col_name in private$numeric_cols) {
-          col_data <- private$data[[col_name]]
-          orig_min <- private$original_params$min[[col_name]]
-          orig_max <- private$original_params$max[[col_name]]
-
-          if (!is.null(orig_min) && !is.null(orig_max) && orig_max > orig_min) {
-            private$data[[col_name]] <- col_data * (orig_max - orig_min) + orig_min
+        mins <- private$original_params$min
+        maxs <- private$original_params$max
+        for (cn in private$numeric_cols) {
+          vec <- private$data[[cn]]
+          orig_min <- mins[[cn]]; orig_max <- maxs[[cn]]
+          if (!is.null(orig_min) && !is.null(orig_max) && !is.na(orig_min) && !is.na(orig_max) && orig_max > orig_min) {
+            private$data[[cn]] <- vec * (orig_max - orig_min) + orig_min
           }
         }
       } else if (private$scaling_type == "standardized") {
-        for (col_name in private$numeric_cols) {
-          col_data <- private$data[[col_name]]
-          orig_mean <- private$original_params$mean[[col_name]]
-          orig_sd <- private$original_params$sd[[col_name]]
-
-          if (!is.null(orig_mean) && !is.null(orig_sd) && orig_sd > 0) {
-            private$data[[col_name]] <- col_data * orig_sd + orig_mean
+        means <- private$original_params$mean
+        sds   <- private$original_params$sd
+        for (cn in private$numeric_cols) {
+          vec <- private$data[[cn]]
+          orig_mean <- means[[cn]]; orig_sd <- sds[[cn]]
+          if (!is.null(orig_mean) && !is.null(orig_sd) && !is.na(orig_mean) && !is.na(orig_sd) && orig_sd > 0) {
+            private$data[[cn]] <- vec * orig_sd + orig_mean
           }
         }
       }
 
       private$scaling_type <- "none"
-      private$calculate_statistic()
+      private$calculate_stats(private$numeric_cols)
+      invisible(NULL)
     },
 
-    rename_column = function(name_mapping) {
-      # name_mapping - именованный вектор: c("старое_имя" = "новое_имя", ...)
-      if (is.null(name_mapping) || length(name_mapping) == 0) {
-        return()
-      }
+    ### ---------- Переименование / удаление столбцов ----------
+    rename_columns = function(name_mapping) {
+      # name_mapping - именованный вектор: names(name_mapping) = старые имена, 
+      # значения = новые имена, т.е. c("old_name" = "new_name", ...)
+      if (is.null(name_mapping) || length(name_mapping) == 0) return(invisible(NULL))
 
-      # Переименовываем столбцы в данных
       for (old_name in names(name_mapping)) {
-        new_name <- name_mapping[old_name]
-        if (old_name %in% names(private$data) && new_name != old_name) {
+        new_name <- name_mapping[[old_name]]
+        if (old_name %in% names(private$data) && new_name != old_name && nzchar(new_name)) {
           names(private$data)[names(private$data) == old_name] <- new_name
 
-          # Обновляем списки столбцов
-          if (old_name %in% private$numeric_cols) {
-            private$numeric_cols <- replace(private$numeric_cols, 
-                                           private$numeric_cols == old_name, 
-                                           new_name)
-          }
-          if (old_name %in% private$factor_cols) {
-            private$factor_cols <- replace(private$factor_cols, 
-                                          private$factor_cols == old_name, 
-                                          new_name)
+          # обновляем списки колонок
+          private$numeric_cols[private$numeric_cols == old_name] <- new_name
+          private$factor_cols[private$factor_cols == old_name]   <- new_name
+          private$no_type_cols[private$no_type_cols == old_name] <- new_name
+
+          # обновляем stats: переносим значения
+          for (field in names(private$stats)) {
+            private$stats[[field]] <- private$rename_in_named_list(private$stats[[field]], old_name, new_name)
           }
 
-          # Обновляем статистику - переименовываем ключи
-          for (field in private$stat_fields) {
-            if (!is.null(private[[field]][[old_name]])) {
-              private[[field]][[new_name]] <- private[[field]][[old_name]]
-              private[[field]][[old_name]] <- NULL
-            }
+          # обновляем original_params (если есть)
+          if (!is.null(private$original_params$min)) {
+            private$original_params$min <- private$rename_in_named_list(private$original_params$min, old_name, new_name)
           }
-
-          # Обновляем оригинальные параметры масштабирования
-          if (private$scaling_type == "normalized") {
-            if (!is.null(private$original_params$min[[old_name]])) {
-              private$original_params$min[[new_name]] <- private$original_params$min[[old_name]]
-              private$original_params$min[[old_name]] <- NULL
-            }
-            if (!is.null(private$original_params$max[[old_name]])) {
-              private$original_params$max[[new_name]] <- private$original_params$max[[old_name]]
-              private$original_params$max[[old_name]] <- NULL
-            }
-          } else if (private$scaling_type == "standardized") {
-            if (!is.null(private$original_params$mean[[old_name]])) {
-              private$original_params$mean[[new_name]] <- private$original_params$mean[[old_name]]
-              private$original_params$mean[[old_name]] <- NULL
-            }
-            if (!is.null(private$original_params$sd[[old_name]])) {
-              private$original_params$sd[[new_name]] <- private$original_params$sd[[old_name]]
-              private$original_params$sd[[old_name]] <- NULL
-            }
+          if (!is.null(private$original_params$max)) {
+            private$original_params$max <- private$rename_in_named_list(private$original_params$max, old_name, new_name)
+          }
+          if (!is.null(private$original_params$mean)) {
+            private$original_params$mean <- private$rename_in_named_list(private$original_params$mean, old_name, new_name)
+          }
+          if (!is.null(private$original_params$sd)) {
+            private$original_params$sd <- private$rename_in_named_list(private$original_params$sd, old_name, new_name)
           }
         }
       }
+      invisible(NULL)
     },
 
-    remove_column = function(columns_to_remove) {
-      if (is.null(columns_to_remove) || length(columns_to_remove) == 0) {
-        return()
+    remove_columns = function(columns_to_remove) {
+      if (is.null(columns_to_remove) || length(columns_to_remove) == 0) return(invisible(NULL))
+
+      cols_present <- intersect(columns_to_remove, names(private$data))
+      if (length(cols_present) == 0) return(invisible(NULL))
+
+      private$data <- private$data[, !names(private$data) %in% cols_present, drop = FALSE]
+
+      # удаляем из списков типов
+      private$numeric_cols <- setdiff(private$numeric_cols, cols_present)
+      private$factor_cols  <- setdiff(private$factor_cols, cols_present)
+      private$no_type_cols <- setdiff(private$no_type_cols, cols_present)
+
+      # очищаем stats
+      for (field in names(private$stats)) {
+        for (col in cols_present) private$stats[[field]][[col]] <- NULL
       }
 
-      # Удаляем столбцы из данных
-      private$data <- private$data[, !names(private$data) %in% columns_to_remove, drop = FALSE]
+      # очищаем original_params
+      if (!is.null(private$original_params$min)) for (col in cols_present) private$original_params$min[[col]] <- NULL
+      if (!is.null(private$original_params$max)) for (col in cols_present) private$original_params$max[[col]] <- NULL
+      if (!is.null(private$original_params$mean)) for (col in cols_present) private$original_params$mean[[col]] <- NULL
+      if (!is.null(private$original_params$sd))   for (col in cols_present) private$original_params$sd[[col]] <- NULL
 
-      # Обновляем списки типов столбцов
-      private$numeric_cols <- setdiff(private$numeric_cols, columns_to_remove)
-      private$factor_cols <- setdiff(private$factor_cols, columns_to_remove)
+      private$detect_columns()
+      invisible(NULL)
+    },
 
-      # Удаляем из статистических полей
-      for (field in private$stat_fields) {
-        for (col in columns_to_remove) {
-          private[[field]][[col]] <- NULL
-        }
+    ### ---------- Изменение типов признаков ----------
+    set_factor_columns = function(columns) {
+      if (is.null(columns) || length(columns) == 0) return(invisible(NULL))
+
+      cols_present <- intersect(columns, names(private$data))
+      if (length(cols_present) == 0) return(invisible(NULL))
+
+      for (col in cols_present) {
+        # Преобразуем в фактор
+        private$data[[col]] <- as.factor(private$data[[col]])
       }
 
-      # Удаляем из параметров масштабирования
-      if (private$scaling_type == "normalized") {
-        for (col in columns_to_remove) {
-          private$original_params$min[[col]] <- NULL
-          private$original_params$max[[col]] <- NULL
-        }
-      } else if (private$scaling_type == "standardized") {
-        for (col in columns_to_remove) {
-          private$original_params$mean[[col]] <- NULL
-          private$original_params$sd[[col]] <- NULL
+      # Обновляем типы колонок и пересчитываем статистику
+      private$detect_columns()
+      private$calculate_stats(cols_present)
+      invisible(NULL)
+    },
+
+    set_numeric_columns = function(columns) {
+      if (is.null(columns) || length(columns) == 0) return(invisible(NULL))
+      
+      cols_present <- intersect(columns, names(private$data))
+      if (length(cols_present) == 0) return(invisible(NULL))
+
+      for (col in cols_present) {
+        # Преобразуем в числовой тип
+        vec <- private$data[[col]]
+        # Пытаемся преобразовать в числовой, оставляя NA для нечисловых значений
+        numeric_vec <- as.numeric(as.character(vec))
+        
+        # Проверяем, удалось ли преобразование (не все NA)
+        if (!all(is.na(numeric_vec))) {
+          private$data[[col]] <- numeric_vec
         }
       }
+      
+      # Обновляем типы колонок и пересчитываем статистику
+      private$detect_columns()
+      private$calculate_stats(cols_present)
+      invisible(NULL)
     }
   )
 )

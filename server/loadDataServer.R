@@ -2,56 +2,76 @@ source("R/dataLoader.R")
 
 loadDataServer <- function(id, session_data) {
   moduleServer(id, function(input, output, session) {
-    dataLoader <- DataLoader$new()
+
+    loader <- DataLoader$new()
 
     observeEvent(input$load, {
       req(input$file)
 
+      tryCatch({
+
         # Загружаем данные
-        if (input$sep == "auto")
-          result <- dataLoader$csv_load(input$file$datapath, NULL)
-        else
-          result <- dataLoader$csv_load(input$file$datapath, input$sep)
+        res <- loader$csv_load(
+          filepath = input$file$datapath,
+          sep = if (input$sep == "auto") NULL else input$sep,
+          stringsAsFactors = input$has_factor
+        )
 
-        if (result) {
-          current_data <- session_data()
-          current_data$original_data <- dataLoader$get_data()
-          session_data(current_data)
+        session_data$original_data <- res$data
 
-          # Показываем статус с информацией об использованном разделителе
-          sep_display <- switch(dataLoader$get_sep(),
-                              ";" = "точка с запятой",
-                              "," = "запятая",
-                              "\t" = "табуляция",
-                              "|" = "вертикальная черта",
-                              " " = "пробел",
-                              sep_to_use)
+        # Человеческое имя разделителя
+        sep_display <- switch(
+          res$sep,
+          ";" = "точка с запятой",
+          "," = "запятая",
+          "\t" = "табуляция",
+          "|" = "вертикальная черта",
+          res$sep
+        )
 
-          status_msg <- if (input$sep == "auto") {
-            paste("Данные успешно загружены! Автоматически определен разделитель:", sep_display)
-          } else {
-            paste("Данные успешно загружены с разделителем:", sep_display)
-          }
-          output$status <- renderUI({
-          div(style = "color: green;", status_msg)
-          })
+        msg <- if (input$sep == "auto") {
+          paste("Данные успешно загружены. Автоматически определён разделитель:", sep_display)
+        } else {
+          paste("Данные успешно загружены с разделителем:", sep_display)
         }
-        else {
-          output$status <- renderUI({
-            div(style = "color: red;", paste("Ошибка:", dataLoader$get_error()))
-          })
-        }
-  })
-  
-    observeEvent(input$clear, {
-      session_data(list())
-      output$status <- renderUI({
-        div(style = "color: blue;", "Исходные и предобработанные данные, а также обученные модели очищены.")
+
+        showNotification(msg, type = "message")
+
+      }, error = function(e) {
+        showNotification(paste("Ошибка:", e$message), type = "error")
       })
     })
 
+    observeEvent(input$clear, {
+      session_data$original_data <- NULL
+      showNotification("Исходные данные, предобработка и модели очищены.", type = "message")
+    })
+
     output$dataTable <- DT::renderDT({
-      session_data()$original_data
+      req(session_data$original_data)
+      datatable(
+        session_data$original_data,
+        options = list(
+        pageLength = 10,  # Строк на странице
+        scrollX = TRUE,    # Горизонтальная прокрутка
+        searching = TRUE,  # Поиск
+        ordering = TRUE,   # Сортировка
+        language = list(
+          search = "Поиск:",
+          lengthMenu = "Показать _MENU_ записей",
+          info = "Показаны _START_ до _END_ из _TOTAL_ записей",
+          infoEmpty = "Нет данных",
+          infoFiltered = "(отфильтровано из _MAX_ записей)",
+          paginate = list(
+            'first' = "Первая",
+            'last' = "Последняя",
+            'next' = "Следующая",
+            'previous' = "Предыдущая"
+          )
+        )
+      ),
+        rownames = FALSE
+      )
     })
   })
 }

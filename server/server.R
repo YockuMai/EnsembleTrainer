@@ -5,33 +5,39 @@ source("R/sessionManager.R")
 #plan(multisession)
 
 server <- function(input, output, session) {
-
-  # Создаем session_manager один раз на всю сессию
+  # Инициализация сессии
   session_manager <- SessionManager$new(session)
+  session_data <- reactiveValues()
+  
+  observeEvent(TRUE, {
 
-  # Загружаем сессионные данные при запуске
-  session_data <- reactiveVal(list())
+    restore_data <- session_manager$load_session_data()
+    if (length(restore_data) > 0) {
+      for (nm in names(restore_data)) {
+        session_data[[nm]] <- restore_data[[nm]]
+      }
+    }
 
-  observe({
-    tryCatch({
-      session_data(session_manager$load_session_data())
-    }, error = function() {
-      # Если не удалось загрузить, оставляем пустым
-      session_data(list())
-    })
-  })
+  }, once = TRUE)
 
-  # Загрузка данных
+  # Модуль загрузки данных
   loadDataServer("load", session_data)
 
-  # Предобработка данных
+  # Модуль предобработки данных
   preprocessServer("preprocess", session_data)
 
-  # Периодическое сохранение каждые 30 секунд
-  #TODO: Изменить вреся сохранения сессионных файлов
-  observe({
-    invalidateLater(1000, session)
-    data_to_save <- session_data()
-    session_manager$save_session_data(data_to_save)
-  })
+# Отдельный observe для сохранения с задержкой
+  # Создаем реактивку с debounce
+  debounced_data <- reactive({
+    reactiveValuesToList(session_data)
+  }) %>% debounce(2000)  # 2 секунды после последнего изменения
+  
+  # Сохраняем при изменении дебаунс-версии
+  observeEvent(debounced_data(), {
+    session_manager$save_session_data(debounced_data())
+  }, ignoreInit = TRUE)
+
+
+
+  onStop(function() { isolate({ session_manager$save_session_data(reactiveValuesToList(session_data)) }) })
 }
