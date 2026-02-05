@@ -17,7 +17,7 @@ preprocessServer <- function(id, session_data) {
       }
     })
 
-    mutate_preprocess <- function(f) {
+    mutate <- function(f) {
       obj <- preprocess_obj()
       if (is.null(obj)) return(NULL)
 
@@ -33,10 +33,22 @@ preprocessServer <- function(id, session_data) {
 
     # Просмотр данных -> Просмотр
     output$data_overview <- DT::renderDataTable({
-      #preprocess_trigger()
       obj <- preprocess_obj()
-      req(obj)
-      if (is.null(obj)) return(data.frame())
+
+      if (is.null(obj)) {
+        return(
+          datatable(
+            data.frame(Message = "Данные не загружены"),
+            options = list(
+              searching = FALSE,
+              paging = FALSE,
+              info = FALSE
+            ),
+            rownames = FALSE
+          )
+        )
+      }
+
       datatable(
         obj$get_data(),
         options = list(
@@ -72,73 +84,121 @@ preprocessServer <- function(id, session_data) {
       tags$pre(summ_text)
     })
 
-
-    output$missing_info <- renderText({
+    output$missing_info <- renderUI({
       obj <- preprocess_obj()
-      req(obj)
-
-      stat <- obj$get_missing_statistic()
-
-      paste0(
-        "Всего строк: ", stat$rows,
-        "\nСтрок с пропусками: ", stat$count,
-        "\nПроцент: ", stat$percentage, "%"
-      )
-    })
-
-    output$outliers_info <- renderText({
-      obj <- preprocess_obj()
-      req(obj)
-
-      stat <- obj$get_outliers_statistic()
-
-      if (stat$total_outliers == 0) {
-        "Выбросы не обнаружены"
+      if (is.null(obj)) {
+        tags$pre("Данные не загружены")
       } else {
-        paste(
-          "Всего выбросов:", stat$total_outliers,
-          "\nКолонки:", paste(names(stat$outliers_by_column), collapse = ", ")
-        )
+        stat <- obj$get_missing_statistic()
+        tags$pre(paste(
+          "Всего строк: ", stat$rows,
+          "\nСтрок с пропусками: ", stat$count,
+          "\nПроцент: ", stat$percentage, "%"
+        ))
       }
     })
 
-    output$scaling_info <- renderText({
+    output$outliers_info <- renderUI({
       obj <- preprocess_obj()
-      req(obj)
-
-      paste("Текущее масштабирование:", obj$get_scaling_type())
+      if (is.null(obj)) {
+        tags$pre("Данные не загружены")
+      } else {
+        stat <- obj$get_outliers_statistic()
+        if (stat$total_outliers == 0) {
+          tags$pre("Выбросы не обнаружены")
+        } else {
+          tags$pre(paste(
+            "Всего выбросов:", stat$total_outliers,
+            "\nКолонки:", paste(names(stat$outliers_by_column), collapse = ", ")
+          ))
+        }
+      }
     })
 
+    output$scaling_info <- renderUI({
+      obj <- preprocess_obj()
+      if (is.null(obj)) {
+        tags$pre("Данные не загружены")
+      } else {
+        tags$pre(paste("Текущее масштабирование:", obj$get_scaling_type()))
+      }
+    })
+
+    # Просмотр данных -> Смена типа признака
     observe({
       obj <- preprocess_obj()
-      if (is.null(obj)) return()
-
-      updateCheckboxGroupInput(session, "numeric_cols_selected", choices = obj$get_numeric_columns())
-      updateCheckboxGroupInput(session, "factor_cols_selected", choices = obj$get_factor_columns())
-      updateCheckboxGroupInput(session, "no_type_cols_selected", choices = obj$get_no_type_columns())
+      if (is.null(obj)) {
+        updateCheckboxGroupInput(session, "numeric_cols_selected", choices = character(0), selected = character(0))
+        updateCheckboxGroupInput(session, "factor_cols_selected", choices = character(0), selected = character(0))
+        updateCheckboxGroupInput(session, "no_type_cols_selected", choices = character(0), selected = character(0))
+      } else {
+        updateCheckboxGroupInput(session, "numeric_cols_selected", choices = obj$get_numeric_columns())
+        updateCheckboxGroupInput(session, "factor_cols_selected", choices = obj$get_factor_columns())
+        updateCheckboxGroupInput(session, "no_type_cols_selected", choices = obj$get_no_type_columns())
+      }
     })    
 
+    output$no_type_controls <- renderUI({
+      obj <- preprocess_obj()
+
+      if (!is.null(obj)) no_type_cols <- obj$get_no_type_columns() else return(NULL)
+      if (length(no_type_cols) == 0) return(NULL)
+
+      tagList(
+        fluidRow(
+          column(12,
+            div(style = "display: flex; align-items: center;",
+                h4("Признаки с неопределённым типом"),
+                div(
+                  actionButton(ns("make_categorical_no_type"), "Сделать категориальными"),
+                  actionButton(ns("make_numeric_no_type"), "Сделать числовыми"),
+                  style = "display: flex; gap: 10px; margin-left: 10px;"
+                )
+            ),
+            checkboxGroupInput(ns("no_type_cols_selected"), label = NULL, choices = no_type_cols)
+          )
+        )
+      )
+    })
+
     observeEvent(input$make_categorical, {
-      mutate_preprocess(function(obj) {
-        obj$set_factor_columns(input$numeric_cols_selected)
+      withCallingHandlers({
+        mutate(function(obj) {
+          obj$set_factor_columns(input$numeric_cols_selected)
+        })
+      }, warning = function(w) {
+        showNotification(conditionMessage(w), type = "error")
       })
     })
 
     observeEvent(input$make_numeric, {
-      mutate_preprocess(function(obj) {
-        obj$set_numeric_columns(input$factor_cols_selected)
+      withCallingHandlers({
+        mutate(function(obj) {
+          obj$set_numeric_columns(input$factor_cols_selected)
+        })
+      }, warning = function(w) {
+        showNotification(conditionMessage(w), type = "error")
       })
+      
     })
 
     observeEvent(input$make_categorical_no_type, {
-      mutate_preprocess(function(obj) {
-        obj$set_factor_columns(input$no_type_cols_selected)
+      withCallingHandlers({
+        mutate(function(obj) {
+          obj$set_factor_columns(input$no_type_cols_selected)
+        })
+      }, warning = function(w) {
+        showNotification(conditionMessage(w), type = "error")
       })
     })
 
     observeEvent(input$make_numeric_no_type, {
-      mutate_preprocess(function(obj) {
-        obj$set_numeric_columns(input$no_type_cols_selected)
+      withCallingHandlers({
+        mutate(function(obj) {
+          obj$set_numeric_columns(input$no_type_cols_selected)
+        })
+      }, warning = function(w) {
+        showNotification(conditionMessage(w), type = "error")
       })
     })
 

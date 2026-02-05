@@ -140,11 +140,6 @@ PreprocessData <- R6::R6Class("PreprocessData",
       private$data
     },
 
-    get_summary = function() {
-      # вернёт стандартный summary() — можно оставить как есть
-      summary(private$data)
-    },
-
     get_numeric_columns = function() private$numeric_cols,
     get_factor_columns  = function() private$factor_cols,
     get_no_type_columns = function() private$no_type_cols,
