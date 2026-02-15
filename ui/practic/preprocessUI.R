@@ -9,16 +9,11 @@ preprocessUI <- function(id) {
           h4("Предобработанные данные"),
           DT::dataTableOutput(ns("data_overview")),
 
-          h4("Статистика по признакам"),
-          htmlOutput(ns("data_summary")),
-          htmlOutput(ns("missing_info")),
-          htmlOutput(ns("outliers_info")),
-          htmlOutput(ns("scaling_info"))
+          htmlOutput(ns("data_info"))
         ),
 
         tabPanel("Смена типа признаков",
           fluidRow(
-            # Левая колонка: числовые признаки
             column(6,
               div(style = "display: flex; justify-content: flex-start; align-items: center;",
                   h4("Числовые признаки"),
@@ -28,7 +23,6 @@ preprocessUI <- function(id) {
               checkboxGroupInput(ns("numeric_cols_selected"), label = NULL, choices = NULL)
             ),
 
-            # Правая колонка: категориальные признаки
             column(6,
               div(style = "display: flex; justify-content: flex-start; align-items: center;",
                   h4("Категориальные признаки"),
@@ -39,15 +33,11 @@ preprocessUI <- function(id) {
             )
           ),
 
-          # ---------------------------
-          # Нижний ряд: признаки с неопределённым типом
-          # ---------------------------
           uiOutput(ns("no_type_controls"))
         ),
 
         tabPanel("Переименование столбцов",
-        #TODO: Список полей с уже забитыми столбцами 
-          verbatimTextOutput(ns("data_rename"))
+          uiOutput(ns("data_rename"))
         ),
 
         tabPanel("Удаление столбцов",
