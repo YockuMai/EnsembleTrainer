@@ -7,6 +7,7 @@
 *.Rapp.history
 *.RData
 *.Ruserdata
+.VSCodeCounter
 
 # R environment files
 .Renviron
@@ -51,6 +52,7 @@ logs/
 *.temp
 .DS_Store
 Thumbs.db
+*.iml
 
 # IDE files
 .vscode/

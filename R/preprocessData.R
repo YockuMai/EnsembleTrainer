@@ -506,6 +506,41 @@ PreprocessData <- R6::R6Class("PreprocessData",
       private$detect_columns()
       private$calculate_stats(cols_present)
       invisible(NULL)
+    },
+
+    set_columns_name = function(rename_vector) {
+      if (is.null(private$data)) stop("Данные отсутствуют")
+      if (!is.character(rename_vector) || is.null(names(rename_vector))) {
+        stop("Ожидается именованный вектор: старое_имя = новое_имя")
+      }
+    
+      current_names <- colnames(private$data)
+      if (!all(names(rename_vector) %in% current_names)) {
+        stop("Некоторые столбцы для переименования не найдены")
+      }
+    
+      # создаём копию текущих имён
+      new_names <- current_names
+      idx <- match(names(rename_vector), current_names)
+      new_names[idx] <- rename_vector
+      if (any(is.na(new_names)) || any(trimws(new_names) == "")) stop("Имена столбцов не могут быть пустыми")
+      if (any(duplicated(new_names))) stop("После переименования получились дубликаты имен")
+    
+      # переименовываем сами колонки
+      colnames(private$data) <- new_names
+    
+      # обновляем внутренние списки колонок
+      private$detect_columns()
+    
+      # переименовываем ключи в stats
+      for (field in names(private$stats)) {
+        for (old_name in names(rename_vector)) {
+          private$stats[[field]] <- private$rename_in_named_list(private$stats[[field]], old_name, rename_vector[[old_name]])
+        }
+      }
+    
+      invisible(TRUE)
     }
+    
   )
 )

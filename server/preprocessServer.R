@@ -31,7 +31,7 @@ preprocessServer <- function(id, session_data) {
       session_data$preprocess_obj <- preprocess_obj()
     }, ignoreNULL = FALSE)
 
-    # Просмотр данных -> Просмотр
+    # Данные -> Просмотр
     output$data_overview <- DT::renderDataTable({
       obj <- preprocess_obj()
 
@@ -125,7 +125,7 @@ preprocessServer <- function(id, session_data) {
       )
     })
 
-    # Просмотр данных -> Смена типа признака
+    # Данные -> Смена типа признака
     observe({
       obj <- preprocess_obj()
       if (is.null(obj)) {
@@ -203,8 +203,102 @@ preprocessServer <- function(id, session_data) {
       })
     })
 
-    # Переименование столбцов
-    
+    # Данные -> Переименование столбцов
+    output$data_rename <- renderUI({
+      obj <- preprocess_obj()
+
+      if (is.null(obj)) {
+        return(div("Данные отсутствуют"))
+      }
+
+      cols <- colnames(obj$get_data())  # или colnames(obj$data)
+
+      tagList(
+        actionButton(ns("save_names"), "Сохранить"),
+        br(), br(),
+        lapply(cols, function(col) {
+          fluidRow(
+            column(6, textInput(ns(paste0("rename_", col)),
+                                label = NULL,
+                                value = col))
+          )
+        })
+      )
+    })
+  
+    observeEvent(input$save_names, {
+      obj <- preprocess_obj()
+      req(obj)
+
+      cols <- colnames(obj$get_data())
+
+      new_names <- sapply(cols, function(col) {
+        input[[paste0("rename_", col)]]
+      }, USE.NAMES = FALSE)
+
+      rename_vector <- setNames(new_names, cols)
+      tryCatch(
+        {
+          mutate(function(obj) {
+            obj$set_columns_name(rename_vector)
+          })
+          showNotification("Имена столбцов обновлены", type = "message")
+        },
+        error = function(e) {
+          showNotification(
+            paste("Ошибка:", e$message),
+            type = "error"
+          )
+        }
+      )
+    })
+
+    #Данные -> Удаление столбцов
+    output$data_remove <- renderUI({
+      obj <- preprocess_obj()   # ваш reactiveVal с R6 объектом
+
+      if (is.null(obj)) {
+        return(div("Данные отсутствуют"))
+      }
+
+      cols <- colnames(obj$get_data())
+      if (length(cols) == 0) return(div("Нет столбцов для удаления"))
+
+      tagList(
+        actionButton(ns("remove_cols"), "Удалить выбранные"),
+        br(), br(),
+        checkboxGroupInput(
+          ns("cols_to_remove"),
+          label = "Выберите столбцы для удаления",
+          choices = cols
+        )
+      )
+    })
+
+    # Обработчик кнопки
+    observeEvent(input$remove_cols, {
+      obj <- preprocess_obj()
+      req(obj)
+
+      selected_cols <- input$cols_to_remove
+      if (is.null(selected_cols) || length(selected_cols) == 0) {
+        showNotification("Столбцы для удаления не выбраны", type = "warning")
+        return()
+      }
+
+      tryCatch(
+        {
+          mutate(function(obj) {
+            obj$remove_columns(selected_cols)  # метод R6, который удаляет столбцы из self$data
+          })
+          showNotification("Столбцы успешно удалены", type = "message")
+        },
+        error = function(e) {
+          showNotification(paste("Ошибка:", e$message), type = "error")
+        }
+      )
+    })
+
 
   })
 }

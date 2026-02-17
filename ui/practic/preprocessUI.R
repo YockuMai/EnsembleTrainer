@@ -41,8 +41,7 @@ preprocessUI <- function(id) {
         ),
 
         tabPanel("Удаление столбцов",
-        #TODO: Список столбцов с крестиками
-          verbatimTextOutput(ns("data_remove"))
+          uiOutput(ns("data_remove"))
         )
       )
     ),
