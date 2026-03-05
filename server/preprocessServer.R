@@ -7,15 +7,29 @@ preprocessServer <- function(id, session_data) {
 
     preprocess_obj <- reactiveVal(NULL)
 
-    observe({
+    #observe({
+    #  if (!is.null(session_data$preprocess_obj) && is.null(preprocess_obj())) {
+    #    preprocess_obj(session_data$preprocess_obj)   # восстановление
+    #  } else if (!is.null(session_data$original_data) && is.null(preprocess_obj())) {
+    #    preprocess_obj(PreprocessData$new(session_data$original_data))  # новый объект
+    #  } else if (is.null(session_data$original_data)) {
+    #    preprocess_obj(NULL)
+    #  }
+    #})
+
+    #observeEvent(session_data$preprocess_obj, {
+#
+    #}, ignoreNULL = FALSE)
+
+    observeEvent(session_data$original_data, {
       if (!is.null(session_data$preprocess_obj) && is.null(preprocess_obj())) {
         preprocess_obj(session_data$preprocess_obj)   # восстановление
-      } else if (!is.null(session_data$original_data) && is.null(preprocess_obj())) {
+      } else if (!is.null(session_data$original_data)) {
         preprocess_obj(PreprocessData$new(session_data$original_data))  # новый объект
       } else if (is.null(session_data$original_data)) {
         preprocess_obj(NULL)
       }
-    })
+    }, ignoreNULL = FALSE)
 
     mutate <- function(f) {
       obj <- preprocess_obj()
@@ -82,7 +96,7 @@ preprocessServer <- function(id, session_data) {
       }
 
       stat_missing <- obj$get_missing_statistic()
-      stat_outliers <- obj$get_outliers_statistic()
+      stat_outliers <- obj$get_outliers_statistic(iqr_multiplier = input$iqr_mult)
 
       tagList(
         h5("Статистика по столбцам"),
@@ -297,6 +311,152 @@ preprocessServer <- function(id, session_data) {
           showNotification(paste("Ошибка:", e$message), type = "error")
         }
       )
+    })
+
+    # Обработка выбросов
+    output$outliers <- renderUI({
+
+      obj <- preprocess_obj()
+      req(obj)
+
+      num_cols <- obj$get_numeric_columns()
+
+      if (length(num_cols) == 0) {
+        return(div("Числовые столбцы отсутствуют"))
+      }
+
+      tagList(
+      
+        h4("Общая статистика выбросов"),
+
+        verbatimTextOutput(ns("outliers_total_stat")),
+
+        br(),
+
+        sliderInput(
+          ns("iqr_mult"),
+          "Множитель IQR",
+          min = 0.5,
+          max = 3,
+          value = 1.5,
+          step = 0.1
+        ),
+
+        radioButtons(
+          ns("outlier_method"),
+          "Метод обработки",
+          choices = c(
+            "Без изменений" = "none",
+            "Заменить граничными значениями" = "replace",
+            "Удалить строки" = "delete"
+          )
+        ),
+
+        actionButton(ns("apply_outliers"), "Применить"),
+
+        hr(),
+
+        lapply(num_cols, function(col) {
+        
+          plotname  <- paste0("plot_", col)
+          statsname <- paste0("stats_", col)
+
+          output[[plotname]] <- renderPlot({
+          
+            iqr_mult <- input$iqr_mult
+            req(iqr_mult)
+
+            data <- preprocess_obj()$get_data()
+            x <- data[[col]]
+
+            q1 <- quantile(x, 0.25, na.rm = TRUE)
+            q3 <- quantile(x, 0.75, na.rm = TRUE)
+            iqr <- q3 - q1
+
+            lower <- q1 - iqr_mult * iqr
+            upper <- q3 + iqr_mult * iqr
+
+            boxplot(x, main = col, horizontal = TRUE)
+            abline(v = lower, lty = 2)
+            abline(v = upper, lty = 2)
+          })
+
+          output[[statsname]] <- renderText({
+          
+            stats <- preprocess_obj()$
+              get_outliers_statistic(iqr_multiplier = input$iqr_mult)
+
+            col_stat <- stats$outliers_by_column[[col]]
+
+            if (is.null(col_stat)) {
+              return("Выбросы отсутствуют")
+            }
+
+            paste0(
+              "Количество: ", col_stat$count,
+              "\nПроцент: ", col_stat$percentage, "%",
+              "\nНижняя граница: ", round(col_stat$lower, 4),
+              "\nВерхняя граница: ", round(col_stat$upper, 4)
+            )
+          })
+
+          fluidRow(
+            column(
+              12,
+              strong(col),
+              plotOutput(ns(plotname), height = "250px"),
+              verbatimTextOutput(ns(statsname)),
+              hr()
+            )
+          )
+        })
+      )
+    })
+
+    output$outliers_total_stat <- renderText({
+
+      obj <- preprocess_obj()
+      req(obj)
+
+      stats <- obj$get_outliers_statistic(
+        iqr_multiplier = input$iqr_mult
+      )
+
+      paste0(
+        "Всего выбросов: ", stats$total_outliers,
+        "\nСтолбцы с выбросами: ",
+        paste(names(stats$outliers_by_column), collapse = ", ")
+      )
+    })
+
+    observeEvent(input$apply_outliers, {
+
+      method <- input$outlier_method
+      if (method == "none") return()
+
+      obj <- preprocess_obj()
+
+      tryCatch({
+      
+        obj$clear_outliers(
+          method = method,
+          iqr_multiplier = input$iqr_mult
+        )
+
+        preprocess_obj(obj$clone(deep = TRUE))
+
+        showNotification("Обработка выбросов выполнена",
+                         type = "message")
+
+      }, error = function(e) {
+      
+        showNotification(
+          paste("Ошибка:", e$message),
+          type = "error"
+        )
+
+      })
+
     })
 
 
