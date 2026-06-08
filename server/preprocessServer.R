@@ -1,55 +1,61 @@
-source("R/preprocessData.R")
+# preprocessServer.R
+source("R/preprocess_functions.R")
 
 preprocessServer <- function(id, session_data) {
   moduleServer(id, function(input, output, session) {
-
+    
     ns <- session$ns
-
-    preprocess_obj <- reactiveVal(NULL)
-
-    #observe({
-    #  if (!is.null(session_data$preprocess_obj) && is.null(preprocess_obj())) {
-    #    preprocess_obj(session_data$preprocess_obj)   # восстановление
-    #  } else if (!is.null(session_data$original_data) && is.null(preprocess_obj())) {
-    #    preprocess_obj(PreprocessData$new(session_data$original_data))  # новый объект
-    #  } else if (is.null(session_data$original_data)) {
-    #    preprocess_obj(NULL)
-    #  }
-    #})
-
-    #observeEvent(session_data$preprocess_obj, {
-#
-    #}, ignoreNULL = FALSE)
-
+    
+    # Текущие данные (data.frame) – единственный источник истины
+    current_data <- reactiveVal(NULL)
+    
+    # Параметры масштабирования (если нужно обратное преобразование)
+    scaling_params <- reactiveVal(NULL)
+    
+    # При изменении исходных данных (загрузка или сброс) обновляем current_data
     observeEvent(session_data$original_data, {
-      if (!is.null(session_data$preprocess_obj) && is.null(preprocess_obj())) {
-        preprocess_obj(session_data$preprocess_obj)   # восстановление
-      } else if (!is.null(session_data$original_data)) {
-        preprocess_obj(PreprocessData$new(session_data$original_data))  # новый объект
-      } else if (is.null(session_data$original_data)) {
-        preprocess_obj(NULL)
+      if (!is.null(session_data$original_data)) {
+        current_data(session_data$original_data)
+        scaling_params(NULL)  # сброс параметров масштабирования
+      } else {
+        current_data(NULL)
+        scaling_params(NULL)
       }
     }, ignoreNULL = FALSE)
-
-    mutate <- function(f) {
-      obj <- preprocess_obj()
-      if (is.null(obj)) return(NULL)
-
-      f(obj)                 # мутируем объект
-
-      # Форсируем обновление reactiveVal — создаём копию объекта
-      preprocess_obj(obj$clone(deep = TRUE))  # <- лучше: клонируем объект
-    }
-
-    observeEvent(preprocess_obj(), {
-      session_data$preprocess_obj <- preprocess_obj()
+    
+    # Восстановление сессии: если есть сохранённые данные в session_data$preprocess_obj,
+    # то это уже не R6 объект, а data.frame – можно восстановить.
+    # Для совместимости оставим, но лучше использовать отдельное поле session_data$preprocessed_data
+    observeEvent(session_data$preprocess_obj, {
+      if (!is.null(session_data$preprocess_obj) && is.null(current_data())) {
+        # Предполагаем, что session_data$preprocess_obj – это data.frame
+        current_data(session_data$preprocess_obj)
+      }
     }, ignoreNULL = FALSE)
-
-    # Данные -> Просмотр
+    
+    # Сохраняем текущие данные обратно в session_data (для восстановления сессии)
+    observeEvent(current_data(), {
+      session_data$preprocess_obj <- current_data()
+    }, ignoreNULL = FALSE)
+    
+    # ---- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ДЛЯ ОБНОВЛЕНИЯ UI ----
+    
+    # Функция безопасного обновления current_data с уведомлениями
+    apply_transform <- function(transform_func, ..., success_msg = "Операция выполнена") {
+      req(current_data())
+      tryCatch({
+        new_data <- transform_func(current_data(), ...)
+        current_data(new_data)
+        showNotification(success_msg, type = "message")
+      }, error = function(e) {
+        showNotification(paste("Ошибка:", e$message), type = "error")
+      })
+    }
+    
+    # ---- ПРОСМОТР ДАННЫХ (таблица) ----
     output$data_overview <- DT::renderDataTable({
-      obj <- preprocess_obj()
-
-      if (is.null(obj)) {
+      data <- current_data()
+      if (is.null(data)) {
         return(
           datatable(
             data.frame(Error = "Данные не загружены"),
@@ -62,171 +68,142 @@ preprocessServer <- function(id, session_data) {
           )
         )
       }
-
       datatable(
-        obj$get_data(),
+        data,
         options = list(
-        pageLength = 10,  # Строк на странице
-        scrollX = TRUE,    # Горизонтальная прокрутка
-        searching = TRUE,  # Поиск
-        ordering = TRUE,   # Сортировка
-        language = list(
-          search = "Поиск:",
-          lengthMenu = "Показать _MENU_ записей",
-          info = "Показаны _START_ до _END_ из _TOTAL_ записей",
-          infoEmpty = "Нет данных",
-          infoFiltered = "(отфильтровано из _MAX_ записей)",
-          paginate = list(
-            'first' = "Первая",
-            'last' = "Последняя",
-            'next' = "Следующая",
-            'previous' = "Предыдущая"
+          pageLength = 10,
+          scrollX = TRUE,
+          searching = TRUE,
+          ordering = TRUE,
+          language = list(
+            search = "Поиск:",
+            lengthMenu = "Показать _MENU_ записей",
+            info = "Показаны _START_ до _END_ из _TOTAL_ записей",
+            infoEmpty = "Нет данных",
+            infoFiltered = "(отфильтровано из _MAX_ записей)",
+            paginate = list(
+              'first' = "Первая",
+              'last' = "Последняя",
+              'next' = "Следующая",
+              'previous' = "Предыдущая"
+            )
           )
-        )
-      ),
+        ),
         rownames = FALSE
       )
     })
-
+    
+    # ---- ИНФОРМАЦИЯ О ДАННЫХ (пропуски, выбросы, масштабирование) ----
     output$data_info <- renderUI({
-      obj <- preprocess_obj()
-
-      if (is.null(obj)) {
-        return(NULL)
-      }
-
-      stat_missing <- obj$get_missing_statistic()
-      stat_outliers <- obj$get_outliers_statistic(iqr_multiplier = input$iqr_mult)
-
+      data <- current_data()
+      if (is.null(data)) return(NULL)
+      
+      stat_missing <- get_missing_statistic(data)
+      stat_outliers <- get_outliers_statistic(data, iqr_multiplier = input$iqr_mult)
+      # Определяем, было ли масштабирование (по сохранённым параметрам)
+      scaling_type <- if (is.null(scaling_params())) "none" else scaling_params()$type
+      
       tagList(
         h5("Статистика по столбцам"),
-        tags$pre(
-          paste(capture.output(summary(obj$get_data())),
-                collapse = "\n")
-        ),
+        tags$pre(paste(capture.output(summary(data)), collapse = "\n")),
         br(),
-
         h5("Пропуски"),
-        tags$pre(
-          paste(
-            "Всего строк: ", stat_missing$rows,
-            "\nСтрок с пропусками: ", stat_missing$count,
-            "\nПроцент: ", stat_missing$percentage, "%"
-          )
-        ),
+        tags$pre(paste(
+          "Всего строк: ", stat_missing$rows,
+          "\nСтрок с пропусками: ", stat_missing$count,
+          "\nПроцент: ", stat_missing$percentage, "%"
+        )),
         br(),
-
         h5("Выбросы"),
         if (stat_outliers$total_outliers == 0) {
           tags$pre("Выбросы не обнаружены")
         } else {
-          tags$pre(
-            paste(
-              "Всего выбросов:", stat_outliers$total_outliers,
-              "\nКолонки:",
-              paste(names(stat_outliers$outliers_by_column),
-                    collapse = ", ")
-            )
-          )
+          tags$pre(paste(
+            "Всего выбросов:", stat_outliers$total_outliers,
+            "\nКолонки:",
+            paste(names(stat_outliers$outliers_by_column), collapse = ", ")
+          ))
         },
         br(),
-
         h5("Масштабирование"),
-        tags$pre(
-          paste("Текущее масштабирование:",
-                obj$get_scaling_type())
-        )
+        tags$pre(paste("Текущее масштабирование:", scaling_type))
       )
     })
-
-    # Данные -> Смена типа признака
+    
+    # ---- СМЕНА ТИПА ПРИЗНАКОВ ----
+    # Обновление списков в чекбоксах при изменении данных
     observe({
-      obj <- preprocess_obj()
-      if (is.null(obj)) {
-        updateCheckboxGroupInput(session, "numeric_cols_selected", choices = character(0), selected = character(0))
-        updateCheckboxGroupInput(session, "factor_cols_selected", choices = character(0), selected = character(0))
-        updateCheckboxGroupInput(session, "no_type_cols_selected", choices = character(0), selected = character(0))
+      data <- current_data()
+      if (is.null(data)) {
+        updateCheckboxGroupInput(session, "numeric_cols_selected", choices = character(0))
+        updateCheckboxGroupInput(session, "factor_cols_selected", choices = character(0))
+        updateCheckboxGroupInput(session, "no_type_cols_selected", choices = character(0))
       } else {
-        updateCheckboxGroupInput(session, "numeric_cols_selected", choices = obj$get_numeric_columns())
-        updateCheckboxGroupInput(session, "factor_cols_selected", choices = obj$get_factor_columns())
-        updateCheckboxGroupInput(session, "no_type_cols_selected", choices = obj$get_no_type_columns())
+        col_types <- detect_columns(data)
+        updateCheckboxGroupInput(session, "numeric_cols_selected", choices = col_types$numeric)
+        updateCheckboxGroupInput(session, "factor_cols_selected", choices = col_types$factor)
+        updateCheckboxGroupInput(session, "no_type_cols_selected", choices = col_types$other)
       }
-    })    
-
+    })
+    
+    # Отображение блока "неопределённые типы"
     output$no_type_controls <- renderUI({
-      obj <- preprocess_obj()
-
-      if (!is.null(obj)) no_type_cols <- obj$get_no_type_columns() else return(NULL)
+      data <- current_data()
+      if (is.null(data)) return(NULL)
+      col_types <- detect_columns(data)
+      no_type_cols <- col_types$other
       if (length(no_type_cols) == 0) return(NULL)
-
+      
       tagList(
         fluidRow(
           column(12,
-            div(style = "display: flex; align-items: center;",
-                h4("Признаки с неопределённым типом"),
-                div(
-                  actionButton(ns("make_categorical_no_type"), "Сделать категориальными"),
-                  actionButton(ns("make_numeric_no_type"), "Сделать числовыми"),
-                  style = "display: flex; gap: 10px; margin-left: 10px;"
-                )
-            ),
-            checkboxGroupInput(ns("no_type_cols_selected"), label = NULL, choices = no_type_cols)
+                 div(style = "display: flex; align-items: center;",
+                     h4("Признаки с неопределённым типом"),
+                     div(
+                       actionButton(ns("make_categorical_no_type"), "Сделать категориальными"),
+                       actionButton(ns("make_numeric_no_type"), "Сделать числовыми"),
+                       style = "display: flex; gap: 10px; margin-left: 10px;"
+                     )
+                 ),
+                 checkboxGroupInput(ns("no_type_cols_selected"), label = NULL, choices = no_type_cols)
           )
         )
       )
     })
-
+    
+    # Преобразовать числовые в факторы
     observeEvent(input$make_categorical, {
-      withCallingHandlers({
-        mutate(function(obj) {
-          obj$set_factor_columns(input$numeric_cols_selected)
-        })
-      }, warning = function(w) {
-        showNotification(conditionMessage(w), type = "error")
-      })
+      req(current_data(), input$numeric_cols_selected)
+      apply_transform(set_factor_columns, columns = input$numeric_cols_selected,
+                      success_msg = "Числовые колонки преобразованы в факторы")
     })
-
+    
+    # Преобразовать факторы в числовые
     observeEvent(input$make_numeric, {
-      withCallingHandlers({
-        mutate(function(obj) {
-          obj$set_numeric_columns(input$factor_cols_selected)
-        })
-      }, warning = function(w) {
-        showNotification(conditionMessage(w), type = "error")
-      })
-      
+      req(current_data(), input$factor_cols_selected)
+      apply_transform(set_numeric_columns, columns = input$factor_cols_selected,
+                      success_msg = "Факторы преобразованы в числовые")
     })
-
+    
+    # Преобразовать неопределённые в факторы
     observeEvent(input$make_categorical_no_type, {
-      withCallingHandlers({
-        mutate(function(obj) {
-          obj$set_factor_columns(input$no_type_cols_selected)
-        })
-      }, warning = function(w) {
-        showNotification(conditionMessage(w), type = "error")
-      })
+      req(current_data(), input$no_type_cols_selected)
+      apply_transform(set_factor_columns, columns = input$no_type_cols_selected,
+                      success_msg = "Колонки преобразованы в факторы")
     })
-
+    
+    # Преобразовать неопределённые в числовые
     observeEvent(input$make_numeric_no_type, {
-      withCallingHandlers({
-        mutate(function(obj) {
-          obj$set_numeric_columns(input$no_type_cols_selected)
-        })
-      }, warning = function(w) {
-        showNotification(conditionMessage(w), type = "error")
-      })
+      req(current_data(), input$no_type_cols_selected)
+      apply_transform(set_numeric_columns, columns = input$no_type_cols_selected,
+                      success_msg = "Колонки преобразованы в числовые")
     })
-
-    # Данные -> Переименование столбцов
+    
+    # ---- ПЕРЕИМЕНОВАНИЕ СТОЛБЦОВ ----
     output$data_rename <- renderUI({
-      obj <- preprocess_obj()
-
-      if (is.null(obj)) {
-        return(div("Данные отсутствуют"))
-      }
-
-      cols <- colnames(obj$get_data())  # или colnames(obj$data)
-
+      data <- current_data()
+      if (is.null(data)) return(div("Данные отсутствуют"))
+      cols <- colnames(data)
       tagList(
         actionButton(ns("save_names"), "Сохранить"),
         br(), br(),
@@ -239,45 +216,25 @@ preprocessServer <- function(id, session_data) {
         })
       )
     })
-  
+    
     observeEvent(input$save_names, {
-      obj <- preprocess_obj()
-      req(obj)
-
-      cols <- colnames(obj$get_data())
-
+      data <- current_data()
+      req(data)
+      cols <- colnames(data)
       new_names <- sapply(cols, function(col) {
         input[[paste0("rename_", col)]]
       }, USE.NAMES = FALSE)
-
       rename_vector <- setNames(new_names, cols)
-      tryCatch(
-        {
-          mutate(function(obj) {
-            obj$set_columns_name(rename_vector)
-          })
-          showNotification("Имена столбцов обновлены", type = "message")
-        },
-        error = function(e) {
-          showNotification(
-            paste("Ошибка:", e$message),
-            type = "error"
-          )
-        }
-      )
+      apply_transform(set_columns_name, rename_vector = rename_vector,
+                      success_msg = "Имена столбцов обновлены")
     })
-
-    #Данные -> Удаление столбцов
+    
+    # ---- УДАЛЕНИЕ СТОЛБЦОВ ----
     output$data_remove <- renderUI({
-      obj <- preprocess_obj()   # ваш reactiveVal с R6 объектом
-
-      if (is.null(obj)) {
-        return(div("Данные отсутствуют"))
-      }
-
-      cols <- colnames(obj$get_data())
+      data <- current_data()
+      if (is.null(data)) return(div("Данные отсутствуют"))
+      cols <- colnames(data)
       if (length(cols) == 0) return(div("Нет столбцов для удаления"))
-
       tagList(
         actionButton(ns("remove_cols"), "Удалить выбранные"),
         br(), br(),
@@ -288,110 +245,63 @@ preprocessServer <- function(id, session_data) {
         )
       )
     })
-
-    # Обработчик кнопки
+    
     observeEvent(input$remove_cols, {
-      obj <- preprocess_obj()
-      req(obj)
-
-      selected_cols <- input$cols_to_remove
-      if (is.null(selected_cols) || length(selected_cols) == 0) {
+      selected <- input$cols_to_remove
+      if (is.null(selected) || length(selected) == 0) {
         showNotification("Столбцы для удаления не выбраны", type = "warning")
         return()
       }
-
-      tryCatch(
-        {
-          mutate(function(obj) {
-            obj$remove_columns(selected_cols)  # метод R6, который удаляет столбцы из self$data
-          })
-          showNotification("Столбцы успешно удалены", type = "message")
-        },
-        error = function(e) {
-          showNotification(paste("Ошибка:", e$message), type = "error")
-        }
-      )
+      apply_transform(remove_columns, columns_to_remove = selected,
+                      success_msg = "Столбцы удалены")
     })
-
-    # Обработка выбросов
+    
+    # ---- ОБРАБОТКА ВЫБРОСОВ ----
     output$outliers <- renderUI({
-
-      obj <- preprocess_obj()
-      req(obj)
-
-      num_cols <- obj$get_numeric_columns()
-
+      data <- current_data()
+      req(data)
+      col_types <- detect_columns(data)
+      num_cols <- col_types$numeric
       if (length(num_cols) == 0) {
         return(div("Числовые столбцы отсутствуют"))
       }
-
-      tagList(
       
+      tagList(
         h4("Общая статистика выбросов"),
-
         verbatimTextOutput(ns("outliers_total_stat")),
-
         br(),
-
-        sliderInput(
-          ns("iqr_mult"),
-          "Множитель IQR",
-          min = 0.5,
-          max = 3,
-          value = 1.5,
-          step = 0.1
-        ),
-
-        radioButtons(
-          ns("outlier_method"),
-          "Метод обработки",
-          choices = c(
-            "Без изменений" = "none",
-            "Заменить граничными значениями" = "replace",
-            "Удалить строки" = "delete"
-          )
-        ),
-
+        sliderInput(ns("iqr_mult"), "Множитель IQR", min = 0.5, max = 3, value = 1.5, step = 0.1),
+        radioButtons(ns("outlier_method"), "Метод обработки",
+                     choices = c(
+                       "Без изменений" = "none",
+                       "Заменить граничными значениями" = "replace",
+                       "Удалить строки" = "delete"
+                     )),
         actionButton(ns("apply_outliers"), "Применить"),
-
         hr(),
-
-        lapply(num_cols, function(col) {
         
-          plotname  <- paste0("plot_", col)
+        lapply(num_cols, function(col) {
+          plotname <- paste0("plot_", col)
           statsname <- paste0("stats_", col)
-
-          output[[plotname]] <- renderPlot({
           
-            iqr_mult <- input$iqr_mult
-            req(iqr_mult)
-
-            data <- preprocess_obj()$get_data()
-            x <- data[[col]]
-
+          output[[plotname]] <- renderPlot({
+            req(current_data(), input$iqr_mult)
+            x <- current_data()[[col]]
             q1 <- quantile(x, 0.25, na.rm = TRUE)
             q3 <- quantile(x, 0.75, na.rm = TRUE)
             iqr <- q3 - q1
-
-            lower <- q1 - iqr_mult * iqr
-            upper <- q3 + iqr_mult * iqr
-
+            lower <- q1 - input$iqr_mult * iqr
+            upper <- q3 + input$iqr_mult * iqr
             boxplot(x, main = col, horizontal = TRUE)
             abline(v = lower, lty = 2)
             abline(v = upper, lty = 2)
           })
-
-          output[[statsname]] <- renderText({
           
-            stats <- preprocess_obj()$
-              get_outliers_statistic(iqr_multiplier = input$iqr_mult)
-
+          output[[statsname]] <- renderText({
+            req(current_data(), input$iqr_mult)
+            stats <- get_outliers_statistic(current_data(), iqr_multiplier = input$iqr_mult)
             col_stat <- stats$outliers_by_column[[col]]
-
-            if (is.null(col_stat)) {
-              return("Выбросы отсутствуют")
-            }
-
+            if (is.null(col_stat)) return("Выбросы отсутствуют")
             paste0(
               "Количество: ", col_stat$count,
               "\nПроцент: ", col_stat$percentage, "%",
@@ -399,66 +309,83 @@ preprocessServer <- function(id, session_data) {
               "\nВерхняя граница: ", round(col_stat$upper, 4)
             )
           })
-
+          
           fluidRow(
-            column(
-              12,
-              strong(col),
-              plotOutput(ns(plotname), height = "250px"),
-              verbatimTextOutput(ns(statsname)),
-              hr()
+            column(12,
+                   strong(col),
+                   plotOutput(ns(plotname), height = "250px"),
+                   verbatimTextOutput(ns(statsname)),
+                   hr()
             )
           )
         })
       )
     })
-
+    
     output$outliers_total_stat <- renderText({
-
-      obj <- preprocess_obj()
-      req(obj)
-
-      stats <- obj$get_outliers_statistic(
-        iqr_multiplier = input$iqr_mult
-      )
-
+      data <- current_data()
+      req(data, input$iqr_mult)
+      stats <- get_outliers_statistic(data, iqr_multiplier = input$iqr_mult)
       paste0(
         "Всего выбросов: ", stats$total_outliers,
         "\nСтолбцы с выбросами: ",
         paste(names(stats$outliers_by_column), collapse = ", ")
       )
     })
-
+    
     observeEvent(input$apply_outliers, {
-
       method <- input$outlier_method
       if (method == "none") return()
-
-      obj <- preprocess_obj()
-
-      tryCatch({
-      
-        obj$clear_outliers(
-          method = method,
-          iqr_multiplier = input$iqr_mult
-        )
-
-        preprocess_obj(obj$clone(deep = TRUE))
-
-        showNotification("Обработка выбросов выполнена",
-                         type = "message")
-
-      }, error = function(e) {
-      
-        showNotification(
-          paste("Ошибка:", e$message),
-          type = "error"
-        )
-
-      })
-
+      apply_transform(clear_outliers, method = method, iqr_multiplier = input$iqr_mult,
+                      success_msg = "Обработка выбросов выполнена")
     })
-
-
+    
+    # ---- НОРМАЛИЗАЦИЯ / СТАНДАРТИЗАЦИЯ (опционально) ----
+    # Добавим две кнопки в UI (вы можете их разместить отдельно)
+    # Пример:
+    output$scaling_controls <- renderUI({
+      tagList(
+        actionButton(ns("normalize_btn"), "Нормализовать (min-max)"),
+        actionButton(ns("standardize_btn"), "Стандартизировать (z-score)"),
+        actionButton(ns("descale_btn"), "Отменить масштабирование")
+      )
+    })
+    
+    observeEvent(input$normalize_btn, {
+      req(current_data())
+      tryCatch({
+        res <- normalize(current_data())
+        current_data(res$data)
+        scaling_params(res$params)
+        showNotification("Данные нормализованы", type = "message")
+      }, error = function(e) {
+        showNotification(paste("Ошибка нормализации:", e$message), type = "error")
+      })
+    })
+    
+    observeEvent(input$standardize_btn, {
+      req(current_data())
+      tryCatch({
+        res <- standardize(current_data())
+        current_data(res$data)
+        scaling_params(res$params)
+        showNotification("Данные стандартизированы", type = "message")
+      }, error = function(e) {
+        showNotification(paste("Ошибка стандартизации:", e$message), type = "error")
+      })
+    })
+    
+    observeEvent(input$descale_btn, {
+      req(current_data(), scaling_params())
+      tryCatch({
+        new_data <- denormalize_or_destandardize(current_data(), scaling_params())
+        current_data(new_data)
+        scaling_params(NULL)
+        showNotification("Масштабирование отменено", type = "message")
+      }, error = function(e) {
+        showNotification(paste("Ошибка:", e$message), type = "error")
+      })
+    })
+    
   })
 }

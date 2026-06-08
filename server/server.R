@@ -1,42 +1,46 @@
 source("server/loadDataServer.R")
 source("server/preprocessServer.R")
-source("R/sessionManager.R")
+source("R/session_manager_functions.R")   # функциональные функции для работы с сессией
 
-#plan(multisession)
-create_server <- function(){
+# plan(multisession)  # раскомментировать при необходимости
+
+create_server <- function() {
   function(input, output, session) {
-    # Инициализация сессии
-    session_manager <- SessionManager$new(session)
+    
+    # Реактивное хранилище данных сессии
     session_data <- reactiveValues()
     
+    # Восстановление сессии при старте (один раз)
     observeEvent(TRUE, {
-      restore_data <- session_manager$load_session_data()
+      restore_data <- load_session_data(session)   # загружаем все .rds из директории пользователя
       if (length(restore_data) > 0) {
         for (nm in names(restore_data)) {
           session_data[[nm]] <- restore_data[[nm]]
         }
       }
     }, once = TRUE)
-  
-    # Модуль загрузки данных
+    
+    # Модуль загрузки данных (использует session_data$original_data)
     loadDataServer("load", session_data)
-  
-    # Модуль предобработки данных
+    
+    # Модуль предобработки (использует session_data$original_data и session_data$preprocess_obj)
     preprocessServer("preprocess", session_data)
-  
-  # Отдельный observe для сохранения с задержкой
-    # Создаем реактивку с debounce
+    
+    # Автосохранение состояния сессии с debounce (2 секунды без изменений)
     debounced_data <- reactive({
       reactiveValuesToList(session_data)
-    }) %>% debounce(2000)  # 2 секунды после последнего изменения
+    }) %>% debounce(2000)
     
-    # Сохраняем при изменении дебаунс-версии
     observeEvent(debounced_data(), {
-      session_manager$save_session_data(debounced_data())
+      save_session_data(debounced_data(), session)   # сохраняем всё состояние
     }, ignoreInit = TRUE)
-  
-  
-  
-    onStop(function() { isolate({ session_manager$save_session_data(reactiveValuesToList(session_data)) }) })
+    
+    # Сохранение при завершении сессии (на всякий случай)
+    onStop(function() {
+      isolate({
+        final_state <- reactiveValuesToList(session_data)
+        save_session_data(final_state, session)
+      })
+    })
   }
 }
