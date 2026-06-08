@@ -8,6 +8,7 @@
 *.RData
 *.Ruserdata
 .VSCodeCounter
+*.db
 
 # R environment files
 .Renviron

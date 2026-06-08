@@ -6,36 +6,46 @@ preprocessServer <- function(id, session_data) {
     
     ns <- session$ns
     
-    # Текущие данные (data.frame) – единственный источник истины
     current_data <- reactiveVal(NULL)
-    
-    # Параметры масштабирования (если нужно обратное преобразование)
     scaling_params <- reactiveVal(NULL)
     
-    # При изменении исходных данных (загрузка или сброс) обновляем current_data
-    observeEvent(session_data$original_data, {
-      if (!is.null(session_data$original_data)) {
-        current_data(session_data$original_data)
-        scaling_params(NULL)  # сброс параметров масштабирования
-      } else {
+    # preprocessServer.R – исправленный блок инициализации
+    observe({
+      if (is.null(session_data$original_data)) {
+        # Нет исходных данных – сбрасываем всё
         current_data(NULL)
         scaling_params(NULL)
+      } else {
+        # Исходные данные есть
+        if (!is.null(session_data$preprocess_obj)) {
+          # Восстанавливаем предобработанные данные
+          current_data(session_data$preprocess_obj)
+          if (!is.null(session_data$scaling_params)) {
+            scaling_params(session_data$scaling_params)
+          } else {
+            scaling_params(NULL)
+          }
+        } else {
+          # Берём оригинальные данные
+          current_data(session_data$original_data)
+          scaling_params(NULL)
+        }
       }
-    }, ignoreNULL = FALSE)
+    }) %>% bindEvent(
+      session_data$original_data,
+      session_data$preprocess_obj,
+      session_data$scaling_params,
+      ignoreNULL = FALSE
+    )
     
-    # Восстановление сессии: если есть сохранённые данные в session_data$preprocess_obj,
-    # то это уже не R6 объект, а data.frame – можно восстановить.
-    # Для совместимости оставим, но лучше использовать отдельное поле session_data$preprocessed_data
-    observeEvent(session_data$preprocess_obj, {
-      if (!is.null(session_data$preprocess_obj) && is.null(current_data())) {
-        # Предполагаем, что session_data$preprocess_obj – это data.frame
-        current_data(session_data$preprocess_obj)
-      }
-    }, ignoreNULL = FALSE)
-    
-    # Сохраняем текущие данные обратно в session_data (для восстановления сессии)
+    # Сохраняем текущие данные обратно в session_data
     observeEvent(current_data(), {
       session_data$preprocess_obj <- current_data()
+    }, ignoreNULL = FALSE)
+    
+    # Сохраняем параметры масштабирования
+    observeEvent(scaling_params(), {
+      session_data$scaling_params <- scaling_params()
     }, ignoreNULL = FALSE)
     
     # ---- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ДЛЯ ОБНОВЛЕНИЯ UI ----
