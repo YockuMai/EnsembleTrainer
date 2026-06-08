@@ -14,6 +14,9 @@ options(shiny.port = 6698)
 
 options(shiny.reactlog = TRUE)
 
+server <- create_server()
+ui <- create_ui()
+
 app <- shinyApp(ui = ui, server = server)
 
 shiny::runApp(app)
