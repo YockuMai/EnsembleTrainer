@@ -1,13 +1,13 @@
 library(shiny)
-library(R6)
 library(caret)
 library(caretEnsemble)
 library(dplyr)
-#library(future)
 library(DT)
-library(cookies)
-source("server/server.R")
-source("ui/ui.R")
+library(DBI)
+library(RSQLite)
+library(bcrypt)
+
+source("modules/mainModule.R")
 
 options(shiny.host = "127.0.0.1")
 options(shiny.port = 6698)

@@ -1,7 +1,5 @@
 # R/db_functions.R
-library(DBI)
-library(RSQLite)
-library(bcrypt)
+
 
 get_db_conn <- function() {
   dbConnect(SQLite(), "ensemble_trainer.db")
