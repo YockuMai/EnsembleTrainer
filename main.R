@@ -6,6 +6,12 @@ library(DT)
 library(DBI)
 library(RSQLite)
 library(bcrypt)
+library(crayon)
+library(randomForest)
+library(ranger)
+library(gbm)
+library(adabag)
+library(xgboost)
 
 source("modules/mainModule.R")
 

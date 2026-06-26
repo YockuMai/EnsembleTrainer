@@ -8,7 +8,7 @@
 }
 
 #' Вспомогательная: маска пропусков для одного вектора
-.get_missing_mask_single <- function(x) {
+get_missing_mask_single <- function(x) {
   if (is.numeric(x)) {
     return(is.na(x))
   } else {
@@ -75,7 +75,7 @@ get_missing_statistic <- function(data) {
   if (is.null(data) || nrow(data) == 0) {
     return(list(rows = 0, count = 0, percentage = 0))
   }
-  masks <- vapply(data, .get_missing_mask_single, logical(nrow(data)))
+  masks <- vapply(data, get_missing_mask_single, logical(nrow(data)))
   if (is.vector(masks)) masks <- matrix(masks, ncol = 1)
   rows_with_missing <- rowSums(masks, na.rm = TRUE) > 0
   total_rows <- nrow(data)
@@ -89,7 +89,7 @@ clear_missing <- function(data, method = "mean") {
   if (is.null(data) || nrow(data) == 0) return(data)
   
   if (method == "delete") {
-    masks <- vapply(data, .get_missing_mask_single, logical(nrow(data)))
+    masks <- vapply(data, get_missing_mask_single, logical(nrow(data)))
     if (is.vector(masks)) masks <- matrix(masks, ncol = 1)
     rows_with_missing <- rowSums(masks, na.rm = TRUE) > 0
     data <- data[!rows_with_missing, , drop = FALSE]
@@ -100,7 +100,7 @@ clear_missing <- function(data, method = "mean") {
     # Числовые -> mean
     for (cn in col_types$numeric) {
       vec <- data[[cn]]
-      mask <- .get_missing_mask_single(vec)
+      mask <- get_missing_mask_single(vec)
       if (any(mask, na.rm = TRUE)) {
         mean_val <- mean(vec, na.rm = TRUE)
         if (!is.na(mean_val)) data[[cn]][mask] <- mean_val
@@ -109,7 +109,7 @@ clear_missing <- function(data, method = "mean") {
     # Факторы -> мода
     for (cn in col_types$factor) {
       vec <- data[[cn]]
-      mask <- .get_missing_mask_single(vec)
+      mask <- get_missing_mask_single(vec)
       if (any(mask, na.rm = TRUE)) {
         charv <- as.character(vec)
         charv <- charv[!is.na(charv)]
@@ -209,93 +209,6 @@ clear_outliers <- function(data, method = "replace", iqr_multiplier = 1.5) {
   else {
     stop("clear_outliers: method must be 'delete' or 'replace'")
   }
-}
-
-#' Нормализация (min-max). Возвращает список с данными и параметрами для обратного преобразования.
-normalize <- function(data) {
-  col_types <- detect_columns(data)
-  numeric_cols <- col_types$numeric
-  if (length(numeric_cols) == 0) return(list(data = data, params = list()))
-  
-  stats <- compute_numeric_stats(data, numeric_cols)
-  mins <- stats$min
-  maxs <- stats$max
-  new_data <- data
-  for (cn in numeric_cols) {
-    minv <- mins[[cn]]
-    maxv <- maxs[[cn]]
-    if (is.na(minv) || is.na(maxv) || maxv == minv) {
-      new_data[[cn]] <- ifelse(is.na(data[[cn]]), NA_real_, 0)
-    } else {
-      new_data[[cn]] <- (data[[cn]] - minv) / (maxv - minv)
-    }
-  }
-  list(data = new_data, params = list(min = mins, max = maxs, type = "normalized"))
-}
-
-#' Стандартизация (z-score). Возвращает список с данными и параметрами.
-standardize <- function(data) {
-  col_types <- detect_columns(data)
-  numeric_cols <- col_types$numeric
-  if (length(numeric_cols) == 0) return(list(data = data, params = list()))
-  
-  means <- list()
-  sds <- list()
-  new_data <- data
-  for (cn in numeric_cols) {
-    vec <- data[[cn]]
-    if (.safe_all_na(vec)) {
-      means[[cn]] <- NA_real_
-      sds[[cn]] <- NA_real_
-      new_data[[cn]] <- ifelse(is.na(vec), NA_real_, 0)
-    } else {
-      m <- mean(vec, na.rm = TRUE)
-      s <- sd(vec, na.rm = TRUE)
-      means[[cn]] <- m
-      sds[[cn]] <- s
-      if (is.na(s) || s == 0) {
-        new_data[[cn]] <- ifelse(is.na(vec), NA_real_, 0)
-      } else {
-        new_data[[cn]] <- (vec - m) / s
-      }
-    }
-  }
-  list(data = new_data, params = list(mean = means, sd = sds, type = "standardized"))
-}
-
-#' Обратное преобразование (денормализация / дестандартизация)
-denormalize_or_destandardize <- function(data, params) {
-  if (is.null(params) || length(params) == 0) return(data)
-  type <- params$type
-  if (is.null(type)) return(data)
-  
-  col_types <- detect_columns(data)
-  numeric_cols <- col_types$numeric
-  new_data <- data
-  
-  if (type == "normalized") {
-    mins <- params$min
-    maxs <- params$max
-    for (cn in numeric_cols) {
-      minv <- mins[[cn]]
-      maxv <- maxs[[cn]]
-      if (!is.null(minv) && !is.null(maxv) && !is.na(minv) && !is.na(maxv) && maxv > minv) {
-        new_data[[cn]] <- data[[cn]] * (maxv - minv) + minv
-      }
-    }
-  } 
-  else if (type == "standardized") {
-    means <- params$mean
-    sds <- params$sd
-    for (cn in numeric_cols) {
-      m <- means[[cn]]
-      s <- sds[[cn]]
-      if (!is.null(m) && !is.null(s) && !is.na(m) && !is.na(s) && s > 0) {
-        new_data[[cn]] <- data[[cn]] * s + m
-      }
-    }
-  }
-  new_data
 }
 
 #' Переименование колонок
