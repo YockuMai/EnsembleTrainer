@@ -6,6 +6,7 @@ library(DT)
 library(DBI)
 library(RSQLite)
 library(bcrypt)
+library(crayon)
 
 source("modules/mainModule.R")
 

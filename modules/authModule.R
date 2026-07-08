@@ -32,8 +32,6 @@ authServer <- function(id, app_state) {
           app_state$logged_in <- TRUE
           app_state$user_id <- auth$user_id
           clear_session_data()
-          saved_data <- load_user_data(app_state$user_id)
-          for (nm in names(saved_data)) app_state$session_data[[nm]] <- saved_data[[nm]]
         }
       }
     })

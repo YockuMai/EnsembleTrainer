@@ -1,8 +1,9 @@
 appUI <- function(id) {
   ns <- NS(id)
   tagList(
-    div(style = "display: flex; justify-content: flex-end; margin-bottom: 20px;",
-        actionButton(ns("logout_btn"), "Выйти", class = "btn-danger")
+    div(style = "display: flex; justify-content: flex-end; 
+      margin-bottom: 20px;",
+      actionButton(ns("logout_btn"), "Выйти", class = "btn-danger")
     ),
     # Сюда рендерится контент в зависимости от режима
     uiOutput(ns("content_area"))
@@ -11,7 +12,7 @@ appUI <- function(id) {
 
 appServer <- function(id, app_state) {
   moduleServer(id, function(input, output, session) {
-    
+
     ns <- session$ns
     
     current_mode <- reactiveVal(NULL)
@@ -54,10 +55,11 @@ appServer <- function(id, app_state) {
       } else if (mode == "research") {
         tagList(
           div(style = "margin-bottom: 20px;",
-              actionButton(session$ns("back_to_modes"), "← Назад к выбору режима",
-                           class = "btn-secondary")
+            actionButton(session$ns("back_to_modes"),
+                         "← Назад к выбору режима",
+                         class = "btn-secondary")
           ),
-          practicUI()
+          practic_ui()
         )
       }
     })

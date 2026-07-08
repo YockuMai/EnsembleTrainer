@@ -17,13 +17,15 @@ init_db <- function() {
     )
   ")
   dbExecute(conn, "
-    CREATE TABLE IF NOT EXISTS user_data (
-      user_id INTEGER NOT NULL,
-      data_key TEXT NOT NULL,
-      data_value BLOB,
-      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      PRIMARY KEY (user_id, data_key),
-      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    CREATE TABLE IF NOT EXISTS session_metadata (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    data_key TEXT NOT NULL,           -- Ключ данных (например, \"model\", \"predictions\")
+    file_path TEXT NOT NULL,          -- Путь к файлу с данными
+    file_size INTEGER,                -- Размер файла в байтах
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id),
+    UNIQUE(user_id, data_key)         -- Уникальность по user_id и data_key
     )
   ")
 }
@@ -62,52 +64,50 @@ authenticate_user <- function(username, password) {
   }
 }
 
-save_user_data <- function(user_id, data_list) {
-  if (is.null(user_id)) return(invisible(FALSE))
+save_user_data <- function(user_id, session_data, base_path = "session_data") {
+  # Папка пользователя
+  user_dir <- file.path(base_path, paste0("user_", user_id))
+  if (!dir.exists(user_dir)) {
+    dir.create(user_dir, recursive = TRUE)
+  }
+  
   conn <- get_db_conn()
   on.exit(dbDisconnect(conn))
   
-  for (key in names(data_list)) {
-    value <- data_list[[key]]
-    if (is.null(value)) {
-      dbExecute(conn, "DELETE FROM user_data WHERE user_id = ? AND data_key = ?",
-                params = list(user_id, key))
-    } else {
-      raw_val <- serialize(value, NULL, version = 2)
-      # Используем dbSendStatement + dbBind для корректной передачи BLOB
-      stmt <- dbSendStatement(conn, "
-        INSERT INTO user_data (user_id, data_key, data_value, updated_at)
-        VALUES (?, ?, ?, CURRENT_TIMESTAMP)
-        ON CONFLICT(user_id, data_key) DO UPDATE SET
-          data_value = excluded.data_value,
-          updated_at = CURRENT_TIMESTAMP
-      ")
-      # ВАЖНО: BLOB передаём как список из одного raw вектора
-      dbBind(stmt, list(user_id, key, list(raw_val)))
-      dbClearResult(stmt)
-    }
+  for (key in names(session_data)) {
+    data_item <- session_data[[key]]
+    if (is.null(data_item)) next
+    
+    file_path <- file.path(user_dir, paste0(key, ".rds"))
+    saveRDS(data_item, file_path)
+    
+    # Обновляем или вставляем запись в БД
+    dbExecute(
+      conn,
+      "INSERT OR REPLACE INTO session_metadata (user_id, data_key, file_path, file_size, updated_at)
+       VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)",
+      params = list(user_id, key, file_path, file.info(file_path)$size)
+    )
   }
-  invisible(TRUE)
+  user_dir
 }
 
-load_user_data <- function(user_id) {
-  if (is.null(user_id)) return(list())
-  conn <- get_db_conn()
-  on.exit(dbDisconnect(conn))
-  res <- dbGetQuery(conn, "SELECT data_key, data_value FROM user_data WHERE user_id = ?",
-                    params = list(user_id))
-  if (nrow(res) == 0) return(list())
-  result <- list()
-  for (i in 1:nrow(res)) {
-    key <- res$data_key[i]
-    raw_val <- res$data_value[[i]]   # уже raw вектор
-    if (!is.null(raw_val) && length(raw_val) > 0) {
-      result[[key]] <- unserialize(raw_val)
-    } else {
-      result[[key]] <- NULL
-    }
+load_user_data <- function(user_id, base_path = "session_data") {
+  user_dir <- file.path(base_path, paste0("user_", user_id))
+  if (!dir.exists(user_dir)) {
+    return(NULL)  # нет данных
   }
-  result
+  
+  # Получаем список файлов .rds в папке
+  rds_files <- list.files(user_dir, pattern = "\\.rds$", full.names = TRUE)
+  if (length(rds_files) == 0) return(NULL)
+  
+  session_data <- list()
+  for (file_path in rds_files) {
+    key <- tools::file_path_sans_ext(basename(file_path))
+    session_data[[key]] <- readRDS(file_path)
+  }
+  session_data
 }
 
 clear_user_data <- function(user_id) {
