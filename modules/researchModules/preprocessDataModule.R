@@ -51,18 +51,12 @@ preprocessUI <- function(id) {
     tabPanel("Обработка пропусков",
              h3("Обработка пропущенных значений"),
              # Содержимое для пропусков
-             
+             uiOutput(ns("missing_values"))
     ),
     
     tabPanel("Обработка выбросов",
              # Содержимое для выбросов
              uiOutput(ns("outliers"))
-    ),
-    
-    tabPanel("Масштабирование",
-             h3("Масштабирование данных"),
-             # Содержимое для масштабирования
-             
     )
   )
   
@@ -74,45 +68,31 @@ preprocessServer <- function(id, session_data) {
     ns <- session$ns
     
     current_data <- reactiveVal(NULL)
-    scaling_params <- reactiveVal(NULL)
     
     # preprocessServer.R – исправленный блок инициализации
     observe({
       if (is.null(session_data$original_data)) {
         # Нет исходных данных – сбрасываем всё
         current_data(NULL)
-        scaling_params(NULL)
       } else {
         # Исходные данные есть
         if (!is.null(session_data$preprocess_obj)) {
           # Восстанавливаем предобработанные данные
           current_data(session_data$preprocess_obj)
-          if (!is.null(session_data$scaling_params)) {
-            scaling_params(session_data$scaling_params)
-          } else {
-            scaling_params(NULL)
-          }
         } else {
           # Берём оригинальные данные
           current_data(session_data$original_data)
-          scaling_params(NULL)
         }
       }
     }) %>% bindEvent(
       session_data$original_data,
       session_data$preprocess_obj,
-      session_data$scaling_params,
       ignoreNULL = FALSE
     )
     
     # Сохраняем текущие данные обратно в session_data
     observeEvent(current_data(), {
       session_data$preprocess_obj <- current_data()
-    }, ignoreNULL = FALSE)
-    
-    # Сохраняем параметры масштабирования
-    observeEvent(scaling_params(), {
-      session_data$scaling_params <- scaling_params()
     }, ignoreNULL = FALSE)
     
     # ---- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ДЛЯ ОБНОВЛЕНИЯ UI ----
@@ -177,8 +157,6 @@ preprocessServer <- function(id, session_data) {
       
       stat_missing <- get_missing_statistic(data)
       stat_outliers <- get_outliers_statistic(data, iqr_multiplier = input$iqr_mult)
-      # Определяем, было ли масштабирование (по сохранённым параметрам)
-      scaling_type <- if (is.null(scaling_params())) "none" else scaling_params()$type
       
       tagList(
         h5("Статистика по столбцам"),
@@ -200,10 +178,7 @@ preprocessServer <- function(id, session_data) {
             "\nКолонки:",
             paste(names(stat_outliers$outliers_by_column), collapse = ", ")
           ))
-        },
-        br(),
-        h5("Масштабирование"),
-        tags$pre(paste("Текущее масштабирование:", scaling_type))
+        }
       )
     })
     
@@ -350,7 +325,6 @@ preprocessServer <- function(id, session_data) {
         sliderInput(ns("iqr_mult"), "Множитель IQR", min = 0.5, max = 3, value = 1.5, step = 0.1),
         radioButtons(ns("outlier_method"), "Метод обработки",
                      choices = c(
-                       "Без изменений" = "none",
                        "Заменить граничными значениями" = "replace",
                        "Удалить строки" = "delete"
                      )),
@@ -412,57 +386,71 @@ preprocessServer <- function(id, session_data) {
     
     observeEvent(input$apply_outliers, {
       method <- input$outlier_method
-      if (method == "none") return()
       apply_transform(clear_outliers, method = method, iqr_multiplier = input$iqr_mult,
                       success_msg = "Обработка выбросов выполнена")
     })
-    
-    # ---- НОРМАЛИЗАЦИЯ / СТАНДАРТИЗАЦИЯ (опционально) ----
-    # Добавим две кнопки в UI (вы можете их разместить отдельно)
-    # Пример:
-    output$scaling_controls <- renderUI({
+
+    # ---- ОБРАБОТКА ПРОПУСКОВ ----
+    output$missing_values <- renderUI({
+      data <- current_data()
+      req(data)
+      col_types <- detect_columns(data)
+      all_cols <- colnames(data)
+      
       tagList(
-        actionButton(ns("normalize_btn"), "Нормализовать (min-max)"),
-        actionButton(ns("standardize_btn"), "Стандартизировать (z-score)"),
-        actionButton(ns("descale_btn"), "Отменить масштабирование")
+        h4("Общая статистика пропусков"),
+        verbatimTextOutput(ns("missing_total_stat")),
+        br(),
+        radioButtons(ns("missing_method"), "Метод обработки",
+                     choices = c(
+                       "Удалить строки с пропусками" = "delete",
+                       "Заполнить средним/модой" = "mean"
+                     )),
+        actionButton(ns("apply_missing"), "Применить"),
+        hr(),
+        
+        lapply(all_cols, function(col) {
+          statsname <- paste0("missing_stats_", col)
+          
+          output[[statsname]] <- renderText({
+            req(current_data())
+            stats <- get_missing_statistic(current_data())
+            col_stat <- stats$missing_by_column[[col]]
+            if (is.null(col_stat)) return("Пропуски отсутствуют")
+            paste0(
+              "Количество: ", col_stat$count,
+              "\nПроцент: ", col_stat$percentage, "%"
+            )
+          })
+          
+          fluidRow(
+            column(12,
+                   strong(col),
+                   verbatimTextOutput(ns(statsname)),
+                   hr()
+            )
+          )
+        })
       )
     })
-    
-    observeEvent(input$normalize_btn, {
-      req(current_data())
-      tryCatch({
-        res <- normalize(current_data())
-        current_data(res$data)
-        scaling_params(res$params)
-        showNotification("Данные нормализованы", type = "message")
-      }, error = function(e) {
-        showNotification(paste("Ошибка нормализации:", e$message), type = "error")
-      })
+
+    output$missing_total_stat <- renderText({
+      data <- current_data()
+      req(data)
+      stats <- get_missing_statistic(data)
+      paste0(
+        "Всего строк: ", stats$rows,
+        "\nСтрок с пропусками: ", stats$count,
+        "\nПроцент: ", stats$percentage, "%"
+      )
     })
-    
-    observeEvent(input$standardize_btn, {
-      req(current_data())
-      tryCatch({
-        res <- standardize(current_data())
-        current_data(res$data)
-        scaling_params(res$params)
-        showNotification("Данные стандартизированы", type = "message")
-      }, error = function(e) {
-        showNotification(paste("Ошибка стандартизации:", e$message), type = "error")
-      })
+
+    observeEvent(input$apply_missing, {
+      method <- input$missing_method
+      apply_transform(clear_missing, method = method,
+                      success_msg = "Обработка пропусков выполнена")
     })
-    
-    observeEvent(input$descale_btn, {
-      req(current_data(), scaling_params())
-      tryCatch({
-        new_data <- denormalize_or_destandardize(current_data(), scaling_params())
-        current_data(new_data)
-        scaling_params(NULL)
-        showNotification("Масштабирование отменено", type = "message")
-      }, error = function(e) {
-        showNotification(paste("Ошибка:", e$message), type = "error")
-      })
-    })
-    
+
+
   })
 }
