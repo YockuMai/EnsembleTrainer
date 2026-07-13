@@ -7,13 +7,17 @@ practic_ui <- function() {
       h3("Преобработка данных"),
       preprocessUI("preprocess")
     ),
-    tabPanel("Обучение",
-      h3("Обучение модели"),
-      p("Здесь будет функционал обучения.")
+    tabPanel("Выбор моделей и настройка параметров",
+      h3("Параметры моделей"),
+      modelParamsUI("model_params")
     ),
-    tabPanel("Метрики точности",
-      h3("Метрики точности"),
-      p("Здесь будут метрики точности модели.")
+    tabPanel("Обучение моделей",
+      h3("Обучение моделей"),
+      modelTrainingUI("model_training")
+    ),
+    tabPanel("Прогнозирование",
+      h3("Прогнозирование"),
+      #modelPredictionUI("model_prediction")
     )
   )
 }

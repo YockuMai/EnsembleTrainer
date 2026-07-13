@@ -62,52 +62,108 @@ preprocessUI <- function(id) {
   
 }
 
+source("R/preprocess_functions.R")
+source("R/db_functions.R")   # для save_data_frame, load_data_frame, save_user_data
+
 preprocessServer <- function(id, session_data) {
   moduleServer(id, function(input, output, session) {
     
     ns <- session$ns
     
+    # ---- Реактивное значение для хранения текущего датафрейма (в памяти) ----
     current_data <- reactiveVal(NULL)
     
-    # preprocessServer.R – исправленный блок инициализации
+    # ---- Наблюдатель за изменением путей ----
+    # Срабатывает при изменении original_data_path или preprocess_path,
+    # загружает данные с диска и помещает в current_data
     observe({
-      if (is.null(session_data$original_data)) {
-        # Нет исходных данных – сбрасываем всё
-        current_data(NULL)
+      # Сначала пытаемся загрузить предобработанные
+      path <- NULL
+      if (!is.null(session_data$preprocess_path) && file.exists(session_data$preprocess_path)) {
+        path <- session_data$preprocess_path
+      } else if (!is.null(session_data$original_data_path) && file.exists(session_data$original_data_path)) {
+        path <- session_data$original_data_path
+      }
+      
+      if (!is.null(path)) {
+        tryCatch({
+          df <- load_data_frame(path)
+          current_data(df)
+        }, error = function(e) {
+          showNotification(paste("Ошибка загрузки данных:", e$message), type = "error")
+          current_data(NULL)
+        })
       } else {
-        # Исходные данные есть
-        if (!is.null(session_data$preprocess_obj)) {
-          # Восстанавливаем предобработанные данные
-          current_data(session_data$preprocess_obj)
-        } else {
-          # Берём оригинальные данные
-          current_data(session_data$original_data)
-        }
+        # Нет данных – сбрасываем
+        current_data(NULL)
       }
     }) %>% bindEvent(
-      session_data$original_data,
-      session_data$preprocess_obj,
+      session_data$original_data_path,
+      session_data$preprocess_path,
       ignoreNULL = FALSE
     )
     
-    # Сохраняем текущие данные обратно в session_data
-    observeEvent(current_data(), {
-      session_data$preprocess_obj <- current_data()
-    }, ignoreNULL = FALSE)
+    # ---- Сохранение результата предобработки на диск ----
+    save_current_data <- function(df) {
+      user_id <- session_data$user_id
+      if (is.null(user_id)) {
+        showNotification("Ошибка: пользователь не идентифицирован", type = "error")
+        return(NULL)
+      }
+      # Сохраняем датафрейм в FST
+      fst_path <- save_data_frame(df, user_id, "preprocess")
+      # Обновляем путь в session_data
+      session_data$preprocess_path <- fst_path
+      # Обновляем метаданные в SQLite
+      save_user_data(user_id, session_data)
+      # Возвращаем путь
+      fst_path
+    }
     
-    # ---- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ДЛЯ ОБНОВЛЕНИЯ UI ----
-    
-    # Функция безопасного обновления current_data с уведомлениями
+    # ---- Вспомогательная функция для всех преобразований ----
     apply_transform <- function(transform_func, ..., success_msg = "Операция выполнена") {
-      req(current_data())
+      data <- current_data()
+      if (is.null(data)) {
+        showNotification("Нет данных для обработки", type = "warning")
+        return()
+      }
       tryCatch({
-        new_data <- transform_func(current_data(), ...)
+        new_data <- transform_func(data, ...)
+        # Проверяем, что результат не пустой
+        if (is.null(new_data) || nrow(new_data) == 0) {
+          showNotification("Результат обработки пуст", type = "warning")
+          return()
+        }
+        # Сохраняем на диск
+        save_current_data(new_data)
+        # Обновляем current_data (чтобы UI обновился)
         current_data(new_data)
         showNotification(success_msg, type = "message")
+        # Освобождаем память
+        rm(new_data, data); gc()
       }, error = function(e) {
         showNotification(paste("Ошибка:", e$message), type = "error")
       })
     }
+    
+    # ---- Очистка предобработанных данных при удалении оригинальных ----
+    observeEvent(session_data$original_data_path, {
+      if (is.null(session_data$original_data_path)) {
+        # Удаляем файл предобработки, если он есть
+        prep_path <- session_data$preprocess_path
+        if (!is.null(prep_path) && file.exists(prep_path)) {
+          file.remove(prep_path)
+        }
+        session_data$preprocess_path <- NULL
+        # Обновляем БД
+        user_id <- session_data$user_id
+        if (!is.null(user_id)) {
+          save_user_data(user_id, session_data)
+        }
+        # current_data обновится через observe
+        showNotification("Предобработанные данные очищены", type = "message")
+      }
+    }, ignoreNULL = FALSE)
     
     # ---- ПРОСМОТР ДАННЫХ (таблица) ----
     output$data_overview <- DT::renderDataTable({
@@ -116,11 +172,7 @@ preprocessServer <- function(id, session_data) {
         return(
           datatable(
             data.frame(Error = "Данные не загружены"),
-            options = list(
-              searching = FALSE,
-              paging = FALSE,
-              info = FALSE
-            ),
+            options = list(searching = FALSE, paging = FALSE, info = FALSE),
             rownames = FALSE
           )
         )
@@ -150,13 +202,13 @@ preprocessServer <- function(id, session_data) {
       )
     })
     
-    # ---- ИНФОРМАЦИЯ О ДАННЫХ (пропуски, выбросы, масштабирование) ----
+    # ---- ИНФОРМАЦИЯ О ДАННЫХ ----
     output$data_info <- renderUI({
       data <- current_data()
       if (is.null(data)) return(NULL)
       
       stat_missing <- get_missing_statistic(data)
-      stat_outliers <- get_outliers_statistic(data, iqr_multiplier = input$iqr_mult)
+      stat_outliers <- get_outliers_statistic(data, iqr_multiplier = input$iqr_mult %||% 1.5)
       
       tagList(
         h5("Статистика по столбцам"),
@@ -175,15 +227,13 @@ preprocessServer <- function(id, session_data) {
         } else {
           tags$pre(paste(
             "Всего выбросов:", stat_outliers$total_outliers,
-            "\nКолонки:",
-            paste(names(stat_outliers$outliers_by_column), collapse = ", ")
+            "\nКолонки:", paste(names(stat_outliers$outliers_by_column), collapse = ", ")
           ))
         }
       )
     })
     
     # ---- СМЕНА ТИПА ПРИЗНАКОВ ----
-    # Обновление списков в чекбоксах при изменении данных
     observe({
       data <- current_data()
       if (is.null(data)) {
@@ -198,7 +248,6 @@ preprocessServer <- function(id, session_data) {
       }
     })
     
-    # Отображение блока "неопределённые типы"
     output$no_type_controls <- renderUI({
       data <- current_data()
       if (is.null(data)) return(NULL)
@@ -223,28 +272,25 @@ preprocessServer <- function(id, session_data) {
       )
     })
     
-    # Преобразовать числовые в факторы
+    # Преобразования
     observeEvent(input$make_categorical, {
       req(current_data(), input$numeric_cols_selected)
       apply_transform(set_factor_columns, columns = input$numeric_cols_selected,
                       success_msg = "Числовые колонки преобразованы в факторы")
     })
     
-    # Преобразовать факторы в числовые
     observeEvent(input$make_numeric, {
       req(current_data(), input$factor_cols_selected)
       apply_transform(set_numeric_columns, columns = input$factor_cols_selected,
                       success_msg = "Факторы преобразованы в числовые")
     })
     
-    # Преобразовать неопределённые в факторы
     observeEvent(input$make_categorical_no_type, {
       req(current_data(), input$no_type_cols_selected)
       apply_transform(set_factor_columns, columns = input$no_type_cols_selected,
                       success_msg = "Колонки преобразованы в факторы")
     })
     
-    # Преобразовать неопределённые в числовые
     observeEvent(input$make_numeric_no_type, {
       req(current_data(), input$no_type_cols_selected)
       apply_transform(set_numeric_columns, columns = input$no_type_cols_selected,
@@ -389,12 +435,11 @@ preprocessServer <- function(id, session_data) {
       apply_transform(clear_outliers, method = method, iqr_multiplier = input$iqr_mult,
                       success_msg = "Обработка выбросов выполнена")
     })
-
+    
     # ---- ОБРАБОТКА ПРОПУСКОВ ----
     output$missing_values <- renderUI({
       data <- current_data()
       req(data)
-      col_types <- detect_columns(data)
       all_cols <- colnames(data)
       
       tagList(
@@ -433,7 +478,7 @@ preprocessServer <- function(id, session_data) {
         })
       )
     })
-
+    
     output$missing_total_stat <- renderText({
       data <- current_data()
       req(data)
@@ -444,13 +489,12 @@ preprocessServer <- function(id, session_data) {
         "\nПроцент: ", stats$percentage, "%"
       )
     })
-
+    
     observeEvent(input$apply_missing, {
       method <- input$missing_method
       apply_transform(clear_missing, method = method,
                       success_msg = "Обработка пропусков выполнена")
     })
-
-
+    
   })
 }
