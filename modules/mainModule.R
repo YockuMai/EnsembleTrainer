@@ -27,6 +27,27 @@ create_server <- function() {
       user_id = NULL,
       session_data = reactiveValues()  # единый контейнер
     )
+
+    # --- Добавляем наблюдение за входом ---
+    observe({
+      if (app_state$logged_in && !is.null(app_state$user_id)) {
+        # Загружаем метаданные из SQLite
+        saved_meta <- load_user_data(app_state$user_id)
+        if (!is.null(saved_meta)) {
+          for (nm in names(saved_meta)) {
+            app_state$session_data[[nm]] <- saved_meta[[nm]]
+          }
+        }
+        # Сохраняем user_id в session_data для использования в модулях
+        app_state$session_data$user_id <- app_state$user_id
+      } else {
+        # При выходе очищаем session_data
+        isolate({
+          keys <- names(reactiveValuesToList(app_state$session_data))
+          for (key in keys) app_state$session_data[[key]] <- NULL
+        })
+      }
+    })
     
     output$main_ui <- renderUI({
       if (app_state$logged_in) {

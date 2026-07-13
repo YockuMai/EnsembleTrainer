@@ -41,7 +41,7 @@ modelTrainingServer <- function(id, session_data) {
   moduleServer(id, function(input, output, session) {
     ns <- session$ns
     
-    # ---- Инициализация полей в session_data, если их нет ----
+    # ---- Инициализация полей в session_data ----
     observe({
       if (is.null(session_data$trained_models)) {
         session_data$trained_models <- list()
@@ -49,13 +49,31 @@ modelTrainingServer <- function(id, session_data) {
       if (is.null(session_data$training_results)) {
         session_data$training_results <- NULL
       }
-      if (is.null(session_data$preprocess_obj)) {
-        session_data$trained_models <- list()
-        session_data$training_results <- NULL
-      }
     })
+
+    # ---- Автоматическая очистка моделей при удалении всех данных ----
+    observeEvent(c(session_data$original_data_path, session_data$preprocess_path), {
+      # Если оба пути NULL и есть обученные модели - удаляем их
+      if (is.null(session_data$original_data_path) && is.null(session_data$preprocess_path)) {
+        if (length(session_data$trained_models) > 0) {
+          # Удаляем файлы моделей
+          for (meta in session_data$trained_models) {
+            if (file.exists(meta$path)) file.remove(meta$path)
+          }
+          # Очищаем reactive-данные
+          session_data$trained_models <- list()
+          session_data$training_results <- NULL
+          # Обновляем метаданные в SQLite
+          user_id <- session_data$user_id
+          if (!is.null(user_id)) {
+            save_user_data(user_id, session_data)
+          }
+          showNotification("Модели и результаты очищены в связи с удалением данных", type = "message")
+        }
+      }
+    }, ignoreNULL = FALSE)
     
-    # ---- Функция расчёта метрик (скопирована из исходного модуля) ----
+    # ---- Функция расчёта метрик ----
     calc_metrics <- function(probs, true) {
       classes <- levels(true)
       pred <- classes[apply(probs, 1, which.max)]
@@ -87,20 +105,25 @@ modelTrainingServer <- function(id, session_data) {
     
     # ---- Обработчик кнопки "Обучить" ----
     observeEvent(input$train_btn, {
-      # Проверяем наличие данных и параметров
-      req(session_data$preprocess_obj)
-      req(session_data$model_params)
+      user_id <- session_data$user_id
+      req(user_id)   # обязательно, чтобы сохранять модели на диск
       
-      df <- session_data$preprocess_obj
+      # Загружаем данные с диска
+      df <- NULL
+      if (!is.null(session_data$preprocess_path) && file.exists(session_data$preprocess_path)) {
+        df <- load_data_frame(session_data$preprocess_path)
+      } else if (!is.null(session_data$original_data_path) && file.exists(session_data$original_data_path)) {
+        df <- load_data_frame(session_data$original_data_path)
+      }
+      req(df, session_data$model_params)
+      
       params_list <- session_data$model_params
-      
       target <- params_list$target_var
       train_ratio <- params_list$train_ratio
       selected_models <- params_list$selected_models
       
-      # Проверка, что целевая переменная — фактор
       if (!is.factor(df[[target]])) {
-        showNotification("Целевая переменная должна быть факторной (категориальной)", type = "error")
+        showNotification("Целевая переменная должна быть факторной", type = "error")
         return()
       }
       
@@ -115,12 +138,11 @@ modelTrainingServer <- function(id, session_data) {
       X_test <- test_data[, !(names(test_data) %in% target), drop = FALSE]
       y_test <- test_data[[target]]
       
-      # Для XGBoost
       y_train_xgb <- as.numeric(y_train) - 1
       y_test_xgb <- as.numeric(y_test) - 1
       
-      # ---- Инициализация списков для моделей и результатов ----
-      trained_models <- list()
+      # ---- Инициализация списков для метаданных и результатов ----
+      trained_models_meta <- list()   # <-- ОБЪЯВЛЯЕМ ЗДЕСЬ
       results_all <- list()
       
       withProgress(message = "Обучение моделей...", value = 0, {
@@ -128,7 +150,6 @@ modelTrainingServer <- function(id, session_data) {
           model_id <- selected_models[i]
           incProgress(1/length(selected_models), detail = paste("Модель:", model_id))
           
-          # Получаем параметры для модели из session_data
           params <- params_list$params[[model_id]]
           if (is.null(params)) {
             showNotification(paste("Параметры для модели", model_id, "не найдены"), type = "warning")
@@ -149,8 +170,14 @@ modelTrainingServer <- function(id, session_data) {
                 )
                 probs <- predict(mod, X_test, type = "prob")
                 metrics <- calc_metrics(probs, y_test)
-                # Сохраняем модель
-                trained_models[[model_id]] <- mod
+                model_path <- save_model(mod, user_id, model_id)
+                trained_models_meta[[model_id]] <- list(
+                  path = model_path,
+                  metrics = metrics,
+                  params = params,
+                  class = "randomForest"
+                )
+                rm(mod); gc()
                 data.frame(Model = "RandomForest", t(metrics), stringsAsFactors = FALSE)
               },
               # --- Extra Trees ---
@@ -170,7 +197,14 @@ modelTrainingServer <- function(id, session_data) {
                 probs <- predict(mod, data = X_test)$predictions
                 colnames(probs) <- levels(y_train)
                 metrics <- calc_metrics(probs, y_test)
-                trained_models[[model_id]] <- mod
+                model_path <- save_model(mod, user_id, model_id)
+                trained_models_meta[[model_id]] <- list(
+                  path = model_path,
+                  metrics = metrics,
+                  params = params,
+                  class = "ranger"
+                )
+                rm(mod); gc()
                 data.frame(Model = "ExtraTrees", t(metrics), stringsAsFactors = FALSE)
               },
               # --- GBM ---
@@ -193,7 +227,14 @@ modelTrainingServer <- function(id, session_data) {
                 }
                 colnames(probs) <- levels(y_train)
                 metrics <- calc_metrics(probs, y_test)
-                trained_models[[model_id]] <- mod
+                model_path <- save_model(mod, user_id, model_id)
+                trained_models_meta[[model_id]] <- list(
+                  path = model_path,
+                  metrics = metrics,
+                  params = params,
+                  class = "gbm"
+                )
+                rm(mod); gc()
                 data.frame(Model = "GBM", t(metrics), stringsAsFactors = FALSE)
               },
               # --- XGBoost ---
@@ -227,7 +268,14 @@ modelTrainingServer <- function(id, session_data) {
                 probs <- predict(mod, dtest, reshape = TRUE)
                 colnames(probs) <- levels(y_train)
                 metrics <- calc_metrics(probs, y_test)
-                trained_models[[model_id]] <- mod
+                model_path <- save_model(mod, user_id, model_id)
+                trained_models_meta[[model_id]] <- list(
+                  path = model_path,
+                  metrics = metrics,
+                  params = params,
+                  class = "xgboost"
+                )
+                rm(mod); gc()
                 data.frame(Model = "XGBoost", t(metrics), stringsAsFactors = FALSE)
               },
               # --- AdaBoost ---
@@ -242,7 +290,14 @@ modelTrainingServer <- function(id, session_data) {
                   probs <- predict(mod, newdata = test_data, type = "prob")
                   colnames(probs) <- levels(y_train)
                   metrics <- calc_metrics(probs, y_test)
-                  trained_models[[model_id]] <- mod
+                  model_path <- save_model(mod, user_id, model_id)
+                  trained_models_meta[[model_id]] <- list(
+                    path = model_path,
+                    metrics = metrics,
+                    params = params,
+                    class = "ada"
+                  )
+                  rm(mod); gc()
                   data.frame(Model = "AdaBoost", t(metrics), stringsAsFactors = FALSE)
                 } else {
                   mod <- adabag::boosting(
@@ -256,7 +311,14 @@ modelTrainingServer <- function(id, session_data) {
                   probs <- pred$prob
                   colnames(probs) <- levels(y_train)
                   metrics <- calc_metrics(probs, y_test)
-                  trained_models[[model_id]] <- mod
+                  model_path <- save_model(mod, user_id, model_id)
+                  trained_models_meta[[model_id]] <- list(
+                    path = model_path,
+                    metrics = metrics,
+                    params = params,
+                    class = "adabag"
+                  )
+                  rm(mod); gc()
                   data.frame(Model = "AdaBoost", t(metrics), stringsAsFactors = FALSE)
                 }
               },
@@ -608,8 +670,14 @@ modelTrainingServer <- function(id, session_data) {
                 }
                 
                 metrics <- calc_metrics(probs, y_test)
-                # Сохраняем стек-модель (можно сохранить как единый объект, но для простоты сохраняем только метамодель)
-                trained_models[[model_id]] <- stack_mod
+                model_path <- save_model(stack_mod, user_id, model_id)
+                trained_models_meta[[model_id]] <- list(
+                  path = model_path,
+                  metrics = metrics,
+                  params = params,
+                  class = "stacking"
+                )
+                rm(stack_mod); gc()
                 data.frame(Model = paste("Stacking", meta_model), t(metrics), stringsAsFactors = FALSE)
               },
               # --- Логистическая регрессия ---
@@ -624,7 +692,14 @@ modelTrainingServer <- function(id, session_data) {
                   probs <- cbind(1 - probs_positive, probs_positive)
                   colnames(probs) <- levels(y_train)
                   metrics <- calc_metrics(probs, y_test)
-                  trained_models[[model_id]] <- mod
+                  model_path <- save_model(mod, user_id, model_id)
+                  trained_models_meta[[model_id]] <- list(
+                    path = model_path,
+                    metrics = metrics,
+                    params = params,
+                    class = "glm"
+                  )
+                  rm(mod); gc()
                   data.frame(Model = "LogReg", t(metrics), stringsAsFactors = FALSE)
                 } else {
                   mod <- nnet::multinom(
@@ -635,7 +710,14 @@ modelTrainingServer <- function(id, session_data) {
                   )
                   probs <- predict(mod, X_test, type = "probs")
                   metrics <- calc_metrics(probs, y_test)
-                  trained_models[[model_id]] <- mod
+                  model_path <- save_model(mod, user_id, model_id)
+                  trained_models_meta[[model_id]] <- list(
+                    path = model_path,
+                    metrics = metrics,
+                    params = params,
+                    class = "multinom"
+                  )
+                  rm(mod); gc()
                   data.frame(Model = "LogReg", t(metrics), stringsAsFactors = FALSE)
                 }
               },
@@ -653,9 +735,14 @@ modelTrainingServer <- function(id, session_data) {
                 probs <- mod$prob
                 colnames(probs) <- levels(y_train)
                 metrics <- calc_metrics(probs, y_test)
-                # kknn не хранит модель явно, сохраняем параметры и данные? 
-                # Для простоты сохраняем сам объект mod (он содержит train и test данные)
-                trained_models[[model_id]] <- mod
+                model_path <- save_model(mod, user_id, model_id)
+                trained_models_meta[[model_id]] <- list(
+                  path = model_path,
+                  metrics = metrics,
+                  params = params,
+                  class = "kknn"
+                )
+                rm(mod); gc()
                 data.frame(Model = "kNN", t(metrics), stringsAsFactors = FALSE)
               },
               # --- Дерево решений ---
@@ -669,7 +756,14 @@ modelTrainingServer <- function(id, session_data) {
                 )
                 probs <- predict(mod, X_test, type = "prob")
                 metrics <- calc_metrics(probs, y_test)
-                trained_models[[model_id]] <- mod
+                model_path <- save_model(mod, user_id, model_id)
+                trained_models_meta[[model_id]] <- list(
+                  path = model_path,
+                  metrics = metrics,
+                  params = params,
+                  class = "rpart"
+                )
+                rm(mod); gc()
                 data.frame(Model = "rpart", t(metrics), stringsAsFactors = FALSE)
               },
               # --- Наивный Байес ---
@@ -687,7 +781,14 @@ modelTrainingServer <- function(id, session_data) {
                   colnames(probs) <- levels(y_train)
                 }
                 metrics <- calc_metrics(probs, y_test)
-                trained_models[[model_id]] <- mod
+                model_path <- save_model(mod, user_id, model_id)
+                trained_models_meta[[model_id]] <- list(
+                  path = model_path,
+                  metrics = metrics,
+                  params = params,
+                  class = "naiveBayes"
+                )
+                rm(mod); gc()
                 data.frame(Model = "NaiveBayes", t(metrics), stringsAsFactors = FALSE)
               },
               # --- ЛДА ---
@@ -698,7 +799,14 @@ modelTrainingServer <- function(id, session_data) {
                 )
                 probs <- predict(mod, X_test)$posterior
                 metrics <- calc_metrics(probs, y_test)
-                trained_models[[model_id]] <- mod
+                model_path <- save_model(mod, user_id, model_id)
+                trained_models_meta[[model_id]] <- list(
+                  path = model_path,
+                  metrics = metrics,
+                  params = params,
+                  class = "lda"
+                )
+                rm(mod); gc()
                 data.frame(Model = "LDA", t(metrics), stringsAsFactors = FALSE)
               }
             )
@@ -713,71 +821,59 @@ modelTrainingServer <- function(id, session_data) {
         }
       })
       
-      # ---- Формирование итоговой таблицы ----
+      # ---- Формирование итоговой таблицы и сохранение ----
       if (length(results_all) > 0) {
         final_results <- do.call(rbind, results_all)
         rownames(final_results) <- NULL
-        
-        # Добавляем параметры в виде строки (для информации)
         params_str <- sapply(selected_models, function(m) {
           if (m == "stack") {
             p <- params_list$params$stack
-            base_str <- paste(p$base_models, collapse = ", ")
-            meta_str <- p$meta_model
-            paste0("base_models = ", base_str, "; meta_model = ", meta_str)
+            paste0("base_models = ", paste(p$base_models, collapse = ", "),
+                   "; meta_model = ", p$meta_model)
           } else {
             p <- params_list$params[[m]]
-            paste(names(p), unlist(p), sep = "=", collapse = "; ")
+            paste(names(p), unlist(p), sep="=", collapse="; ")
           }
         })
         final_results$Params <- params_str[1:nrow(final_results)]
         
-        # Сохраняем в session_data
-        session_data$trained_models <- trained_models
+        session_data$trained_models <- trained_models_meta
         session_data$training_results <- final_results
         
-        showNotification("Обучение завершено! Модели и результаты сохранены.", type = "message")
+        save_user_data(user_id, session_data)
+        showNotification("Обучение завершено! Модели сохранены на диск.", type = "message")
       } else {
         showNotification("Не удалось обучить ни одну модель", type = "warning")
-        # Очищаем session_data при неудаче?
         session_data$trained_models <- list()
         session_data$training_results <- NULL
       }
+      
+      rm(df, train_data, test_data, X_train, y_train, X_test, y_test); gc()
     })
     
-    # ---- Обработчик кнопки "Очистить результаты" ----
+    # ---- Очистка результатов ----
     observeEvent(input$clear_btn, {
+      if (!is.null(session_data$trained_models)) {
+        for (meta in session_data$trained_models) {
+          if (file.exists(meta$path)) file.remove(meta$path)
+        }
+      }
       session_data$trained_models <- list()
       session_data$training_results <- NULL
       showNotification("Результаты и модели очищены", type = "message")
     })
     
-    # ---- Вывод результатов в UI ----
+    # ---- Отображение результатов ----
     output$results_output <- renderUI({
-      # Проверяем, есть ли результаты в session_data
       res <- session_data$training_results
       if (is.null(res)) {
-        return(
-          div(
-            class = "alert alert-info",
-            style = "margin-top: 20px;",
-            "Результаты обучения появятся здесь после нажатия кнопки."
-          )
-        )
+        return(div(class = "alert alert-info", "Результаты обучения появятся здесь после нажатия кнопки."))
       }
-      
       tagList(
         h4("Результаты обучения моделей"),
         DT::renderDT({
-          DT::datatable(
-            res,
-            options = list(
-              pageLength = 10,
-              scrollX = TRUE,
-              ordering = TRUE
-            ),
-            rownames = FALSE
-          )
+          DT::datatable(res, options = list(pageLength = 10, scrollX = TRUE, ordering = TRUE),
+                        rownames = FALSE)
         })
       )
     })

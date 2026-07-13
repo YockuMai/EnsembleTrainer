@@ -15,12 +15,12 @@ authServer <- function(id, app_state) {
     
     ns <- session$ns
     # Вспомогательная функция очистки session_data
-    clear_session_data <- function() {
-      isolate({
-        keys <- names(reactiveValuesToList(app_state$session_data))
-        for (key in keys) app_state$session_data[[key]] <- NULL
-      })
-    }
+    #clear_session_data <- function() {
+    #  isolate({
+    #    keys <- names(reactiveValuesToList(app_state$session_data))
+    #    for (key in keys) app_state$session_data[[key]] <- NULL
+    #  })
+    #}
     
     # ---- Регистрация ----
     observeEvent(input$register_btn, {
@@ -31,7 +31,7 @@ authServer <- function(id, app_state) {
         if (auth$success) {
           app_state$logged_in <- TRUE
           app_state$user_id <- auth$user_id
-          clear_session_data()
+          #clear_session_data()
         }
       }
     })
@@ -43,9 +43,9 @@ authServer <- function(id, app_state) {
       if (auth$success) {
         app_state$logged_in <- TRUE
         app_state$user_id <- auth$user_id
-        clear_session_data()
-        saved_data <- load_user_data(app_state$user_id)
-        for (nm in names(saved_data)) app_state$session_data[[nm]] <- saved_data[[nm]]
+        #clear_session_data()
+        #saved_data <- load_user_data(app_state$user_id)
+        #for (nm in names(saved_data)) app_state$session_data[[nm]] <- saved_data[[nm]]
       }
     })
   }

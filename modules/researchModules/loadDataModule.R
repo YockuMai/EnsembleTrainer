@@ -31,76 +31,76 @@ loadDataUI <- function(id) {
 loadDataServer <- function(id, session_data) {
   moduleServer(id, function(input, output, session) {
     
+    # Функция для чтения данных с диска (для отображения)
+    get_original_data <- reactive({
+      path <- session_data$original_data_path
+      if (is.null(path) || !file.exists(path)) return(NULL)
+      load_data_frame(path)
+    })
+    
     observeEvent(input$load, {
       req(input$file)
-      
       tryCatch({
-        
-        # Определяем разделитель: если "auto" – передаём NULL, иначе выбранный
         sep <- if (input$sep == "auto") NULL else input$sep
+        res <- load_csv(filepath = input$file$datapath,
+                        sep = sep,
+                        stringsAsFactors = input$has_factor)
+        df <- res$data
         
-        # Загружаем данные с помощью чистой функции
-        res <- load_csv(
-          filepath = input$file$datapath,
-          sep = sep,
-          stringsAsFactors = input$has_factor
-        )
+        # Сохраняем датафрейм на диск
+        user_id <- session_data$user_id
+        req(user_id)
+        fst_path <- save_data_frame(df, user_id, "original_data")
+        session_data$original_data_path <- fst_path
         
-        session_data$original_data <- res$data
+        # Освобождаем память
+        rm(df)
+        gc()
         
-        # Человеческое имя разделителя (используем res$sep – определённый автоматически или указанный)
-        sep_display <- switch(
-          res$sep,
-          ";" = "точка с запятой",
-          "," = "запятая",
-          "\t" = "табуляция",
-          "|" = "вертикальная черта",
-          res$sep
-        )
+        # Обновляем метаданные в SQLite (через save_user_data)
+        # Можно сделать через автосохранение, но для надёжности вызовем явно
+        save_user_data(user_id, session_data)
         
+        sep_display <- switch(res$sep,
+                              ";"="точка с запятой",
+                              ","="запятая",
+                              "\t"="табуляция",
+                              "|"="вертикальная черта",
+                              res$sep)
         msg <- if (input$sep == "auto") {
-          paste("Данные успешно загружены. Автоматически определён разделитель:", sep_display)
+          paste("Данные загружены. Разделитель:", sep_display)
         } else {
-          paste("Данные успешно загружены с разделителем:", sep_display)
+          paste("Данные загружены с разделителем:", sep_display)
         }
-        
         showNotification(msg, type = "message")
-        
       }, error = function(e) {
         showNotification(paste("Ошибка:", e$message), type = "error")
       })
     })
     
     observeEvent(input$clear, {
-      session_data$original_data <- NULL
-      showNotification("Исходные данные, предобработка и модели очищены.", type = "message")
+      # Удаляем файл, если он существует
+      path <- session_data$original_data_path
+      if (!is.null(path) && file.exists(path)) file.remove(path)
+      session_data$original_data_path <- NULL
+      showNotification("Исходные данные очищены", type = "message")
     })
     
     output$dataTable <- DT::renderDT({
-      req(session_data$original_data)
-      datatable(
-        session_data$original_data,
-        options = list(
-          pageLength = 10,
-          scrollX = TRUE,
-          searching = TRUE,
-          ordering = TRUE,
-          language = list(
-            search = "Поиск:",
-            lengthMenu = "Показать _MENU_ записей",
-            info = "Показаны _START_ до _END_ из _TOTAL_ записей",
-            infoEmpty = "Нет данных",
-            infoFiltered = "(отфильтровано из _MAX_ записей)",
-            paginate = list(
-              'first' = "Первая",
-              'last' = "Последняя",
-              'next' = "Следующая",
-              'previous' = "Предыдущая"
-            )
-          )
-        ),
-        rownames = FALSE
-      )
+      df <- get_original_data()
+      req(df)
+      datatable(df, options = list(
+        pageLength = 10, scrollX = TRUE, searching = TRUE, ordering = TRUE,
+        language = list(
+          search = "Поиск:",
+          lengthMenu = "Показать _MENU_ записей",
+          info = "Показаны _START_ до _END_ из _TOTAL_ записей",
+          infoEmpty = "Нет данных",
+          infoFiltered = "(отфильтровано из _MAX_ записей)",
+          paginate = list('first'="Первая", 'last'="Последняя",
+                          'next'="Следующая", 'previous'="Предыдущая")
+        )
+      ), rownames = FALSE)
     })
   })
 }

@@ -524,6 +524,25 @@
       "Repository": "CRAN",
       "Encoding": "UTF-8"
     },
+    "ada": {
+      "Package": "ada",
+      "Version": "2.0-5.1",
+      "Source": "Repository",
+      "Date": "2016-04-12",
+      "Title": "The R Package Ada for Stochastic Boosting",
+      "Authors@R": "c(person(given = \"Mark\", family = \"Culp\", role = c(\"aut\", \"cre\"), email = \"mvculp@mail.wvu.edu\"), person(given = \"Kjell\", family = \"Johnson\", role = \"aut\"), person(given = \"George\", family = \"Michailidis\", role = \"aut\"))",
+      "Depends": [
+        "R(>= 2.10)",
+        "rpart"
+      ],
+      "Description": "Performs discrete, real, and gentle boost under both exponential and  logistic loss on a given data set.  The package ada provides a straightforward,  well-documented, and broad boosting routine for classification, ideally suited  for small to moderate-sized data sets.",
+      "License": "GPL",
+      "NeedsCompilation": "no",
+      "Author": "Mark Culp [aut, cre], Kjell Johnson [aut], George Michailidis [aut]",
+      "Maintainer": "Mark Culp <mvculp@mail.wvu.edu>",
+      "Repository": "CRAN",
+      "Encoding": "UTF-8"
+    },
     "adabag": {
       "Package": "adabag",
       "Version": "5.1",
@@ -1617,6 +1636,79 @@
       "NeedsCompilation": "yes",
       "Author": "Jim Hester [aut], Hadley Wickham [aut], Gábor Csárdi [aut, cre], libuv project contributors [cph] (libuv library), Joyent, Inc. and other Node contributors [cph] (libuv library), Posit Software, PBC [cph, fnd]",
       "Maintainer": "Gábor Csárdi <csardi.gabor@gmail.com>",
+      "Repository": "CRAN"
+    },
+    "fst": {
+      "Package": "fst",
+      "Version": "0.9.8",
+      "Source": "Repository",
+      "Type": "Package",
+      "Title": "Lightning Fast Serialization of Data Frames",
+      "Description": "Multithreaded serialization of compressed data frames using the 'fst' format. The 'fst' format allows for full random access of stored data and a wide range of compression settings using the LZ4 and ZSTD compressors.",
+      "Date": "2022-02-07",
+      "Authors@R": "person(\"Mark\", \"Klik\", email = \"markklik@gmail.com\", role = c(\"aut\", \"cre\", \"cph\"))",
+      "Depends": [
+        "R (>= 3.0.0)"
+      ],
+      "Imports": [
+        "fstcore",
+        "Rcpp"
+      ],
+      "LinkingTo": [
+        "Rcpp",
+        "fstcore"
+      ],
+      "SystemRequirements": "little-endian platform",
+      "RoxygenNote": "7.1.2",
+      "Suggests": [
+        "testthat",
+        "bit64",
+        "data.table",
+        "lintr",
+        "nanotime",
+        "crayon"
+      ],
+      "License": "AGPL-3 | file LICENSE",
+      "Encoding": "UTF-8",
+      "URL": "http://www.fstpackage.org",
+      "BugReports": "https://github.com/fstpackage/fst/issues",
+      "NeedsCompilation": "yes",
+      "Author": "Mark Klik [aut, cre, cph]",
+      "Maintainer": "Mark Klik <markklik@gmail.com>",
+      "Repository": "CRAN"
+    },
+    "fstcore": {
+      "Package": "fstcore",
+      "Version": "0.10.0",
+      "Source": "Repository",
+      "Type": "Package",
+      "Title": "R Bindings to the 'Fstlib' Library",
+      "Description": "The 'fstlib' library provides multithreaded serialization of compressed data frames using the 'fst' format. The 'fst' format allows for random access of stored data and compression with the 'LZ4' and 'ZSTD' compressors.",
+      "Date": "2025-02-10",
+      "Authors@R": "c(person(given = \"Mark\", family = \"Klik\", role = c(\"aut\", \"cre\", \"cph\"), email = \"markklik@gmail.com\", comment = \"Mark Klik is author of the fstcore package and author and copyright holder of the bundled 'fstlib' code\"), person(given = \"Yuta\", family = \"Mori\", role = c(\"ctb\", \"cph\"), comment = \"Yuta Mori is author and copyright holder of the bundled 'libdivsufsort-lite' code, part of 'ZSTD'\"), person(given = \"Przemyslaw\", family = \"Skibinski\", role = c(\"ctb\", \"cph\"), comment = \"Przemyslaw Skibinski is author and copyright holder of the bundled price functions, part of 'ZSTD'\"), person(given = \"Tino\", family = \"Reichardt\", role = c(\"ctb\", \"cph\"), comment = \"Tino Reichardt is author and copyright holder of bundled sources from the 'zstdmt' library, part of 'ZSTD'\"), person(given = \"Yann\", family = \"Collet\", role = c(\"ctb\", \"cph\"), comment = \"Yann Collet is author of the bundled 'LZ4' and 'ZSTD' code and copyright holder of 'LZ4'\"), person(given = \"Facebook, Inc.\", role = \"cph\", comment = \"Bundled 'ZSTD' code\"))",
+      "Depends": [
+        "R (>= 3.0.0)"
+      ],
+      "Imports": [
+        "Rcpp"
+      ],
+      "LinkingTo": [
+        "Rcpp"
+      ],
+      "SystemRequirements": "little-endian platform",
+      "RoxygenNote": "7.3.2",
+      "Suggests": [
+        "testthat",
+        "lintr"
+      ],
+      "License": "MPL-2.0 | file LICENSE",
+      "Encoding": "UTF-8",
+      "Copyright": "This package includes sources from the LZ4 library owned by Yann Collet, sources of the ZSTD library owned by Facebook, Inc., sources of the libdivsufsort-lite library owned by Yuta Mori and sources of the fstlib library owned by Mark Klik",
+      "URL": "https://www.fstpackage.org/fstcore/",
+      "BugReports": "https://github.com/fstpackage/fst/issues",
+      "NeedsCompilation": "yes",
+      "Author": "Mark Klik [aut, cre, cph] (Mark Klik is author of the fstcore package and author and copyright holder of the bundled 'fstlib' code), Yuta Mori [ctb, cph] (Yuta Mori is author and copyright holder of the bundled 'libdivsufsort-lite' code, part of 'ZSTD'), Przemyslaw Skibinski [ctb, cph] (Przemyslaw Skibinski is author and copyright holder of the bundled price functions, part of 'ZSTD'), Tino Reichardt [ctb, cph] (Tino Reichardt is author and copyright holder of bundled sources from the 'zstdmt' library, part of 'ZSTD'), Yann Collet [ctb, cph] (Yann Collet is author of the bundled 'LZ4' and 'ZSTD' code and copyright holder of 'LZ4'), Facebook, Inc. [cph] (Bundled 'ZSTD' code)",
+      "Maintainer": "Mark Klik <markklik@gmail.com>",
       "Repository": "CRAN"
     },
     "future": {

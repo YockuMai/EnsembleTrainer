@@ -64,56 +64,143 @@ authenticate_user <- function(username, password) {
   }
 }
 
+# ----- Сохранение метаданных в SQLite (обновлено) -----
 save_user_data <- function(user_id, session_data, base_path = "session_data") {
-  # Папка пользователя
-  user_dir <- file.path(base_path, paste0("user_", user_id))
-  if (!dir.exists(user_dir)) {
-    dir.create(user_dir, recursive = TRUE)
-  }
+  if (is.null(user_id)) return(invisible(FALSE))
   
   conn <- get_db_conn()
   on.exit(dbDisconnect(conn))
+  
+  # Список ключей, которые мы сохраняем как файлы (пути или RDS)
+  managed_keys <- c("original_data_path", "preprocess_path", 
+                    "model_params", "training_results", "trained_models")
+  
+  # Удаляем старые записи для этих ключей (чтобы очистить удалённые)
+  for (key in managed_keys) {
+    dbExecute(conn, "DELETE FROM session_metadata WHERE user_id = ? AND data_key = ?",
+              params = list(user_id, key))
+  }
+  
+  # Теперь вставляем актуальные записи (остальной код без изменений)
+  user_dir <- file.path(base_path, paste0("user_", user_id))
+  if (!dir.exists(user_dir)) dir.create(user_dir, recursive = TRUE)
   
   for (key in names(session_data)) {
-    data_item <- session_data[[key]]
-    #if (is.null(data_item)) next
+    value <- session_data[[key]]
+    if (is.null(value)) next
     
-    file_path <- file.path(user_dir, paste0(key, ".rds"))
-    saveRDS(data_item, file_path)
-    
-    # Обновляем или вставляем запись в БД
-    dbExecute(
-      conn,
-      "INSERT OR REPLACE INTO session_metadata (user_id, data_key, file_path, file_size, updated_at)
-       VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)",
-      params = list(user_id, key, file_path, file.info(file_path)$size)
-    )
+    if (key %in% c("original_data_path", "preprocess_path") && is.character(value) && length(value) == 1) {
+      if (file.exists(value)) {
+        file_size <- file.info(value)$size
+        dbExecute(conn,
+          "INSERT INTO session_metadata (user_id, data_key, file_path, file_size, updated_at)
+           VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)",
+          params = list(user_id, key, value, file_size)
+        )
+      }
+    } else if (key %in% c("model_params", "training_results", "trained_models")) {
+      rds_path <- file.path(user_dir, paste0(key, ".rds"))
+      saveRDS(value, rds_path)
+      file_size <- file.info(rds_path)$size
+      dbExecute(conn,
+        "INSERT INTO session_metadata (user_id, data_key, file_path, file_size, updated_at)
+         VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)",
+        params = list(user_id, key, rds_path, file_size)
+      )
+    }
   }
-  user_dir
+  invisible(TRUE)
 }
 
+# ----- Загрузка метаданных из SQLite (обновлено) -----
 load_user_data <- function(user_id, base_path = "session_data") {
-  user_dir <- file.path(base_path, paste0("user_", user_id))
-  if (!dir.exists(user_dir)) {
-    return(NULL)  # нет данных
-  }
+  if (is.null(user_id)) return(NULL)
   
-  # Получаем список файлов .rds в папке
-  rds_files <- list.files(user_dir, pattern = "\\.rds$", full.names = TRUE)
-  if (length(rds_files) == 0) return(NULL)
-  
-  session_data <- list()
-  for (file_path in rds_files) {
-    key <- tools::file_path_sans_ext(basename(file_path))
-    session_data[[key]] <- readRDS(file_path)
-  }
-  session_data
-}
-
-clear_user_data <- function(user_id) {
-  if (is.null(user_id)) return(invisible(FALSE))
   conn <- get_db_conn()
   on.exit(dbDisconnect(conn))
-  dbExecute(conn, "DELETE FROM user_data WHERE user_id = ?", params = list(user_id))
+  
+  res <- dbGetQuery(
+    conn,
+    "SELECT data_key, file_path FROM session_metadata WHERE user_id = ?",
+    params = list(user_id)
+  )
+  if (nrow(res) == 0) return(NULL)
+  
+  session_data <- list()
+  for (i in 1:nrow(res)) {
+    key <- res$data_key[i]
+    path <- res$file_path[i]
+    if (!file.exists(path)) next
+    
+    # Определяем тип по ключу
+    if (key %in% c("original_data_path", "preprocess_path")) {
+      # Это пути к FST файлам – сохраняем как строку
+      session_data[[key]] <- path
+    } else if (key %in% c("model_params", "training_results", "trained_models")) {
+      # Это RDS файлы с метаданными
+      session_data[[key]] <- readRDS(path)
+    } else {
+      # fallback: если файл .rds, пробуем загрузить
+      if (grepl("\\.rds$", path)) {
+        session_data[[key]] <- readRDS(path)
+      } else {
+        session_data[[key]] <- path
+      }
+    }
+  }
+  return(session_data)
+}
+
+# ----- Функции для работы с файлами датафреймов (FST) -----
+save_data_frame <- function(df, user_id, key, base_path = "session_data") {
+  user_dir <- file.path(base_path, paste0("user_", user_id))
+  if (!dir.exists(user_dir)) dir.create(user_dir, recursive = TRUE)
+  file_path <- file.path(user_dir, paste0(key, ".fst"))
+  fst::write_fst(df, file_path, compress = 100)
+  file_path
+}
+
+load_data_frame <- function(file_path) {
+  if (!file.exists(file_path)) return(NULL)
+  fst::read_fst(file_path)
+}
+
+# ----- Функции для работы с моделями -----
+save_model <- function(model, user_id, model_id, base_path = "session_data") {
+  user_dir <- file.path(base_path, paste0("user_", user_id), "models")
+  if (!dir.exists(user_dir)) dir.create(user_dir, recursive = TRUE)
+  timestamp <- format(Sys.time(), "%Y%m%d%H%M%S")
+  
+  if (inherits(model, "xgb.Booster")) {
+    file_path <- file.path(user_dir, paste0(model_id, "_", timestamp, ".xgb"))
+    xgboost::xgb.save(model, file_path)
+  } else {
+    file_path <- file.path(user_dir, paste0(model_id, "_", timestamp, ".rds"))
+    saveRDS(model, file_path, compress = "gzip")
+  }
+  file_path
+}
+
+load_model <- function(model_path) {
+  if (!file.exists(model_path)) {
+    stop("Файл модели не найден: ", model_path)
+  }
+  ext <- tools::file_ext(model_path)
+  if (ext == "xgb") {
+    return(xgboost::xgb.load(model_path))
+  } else {
+    return(readRDS(model_path))
+  }
+}
+
+# ----- Очистка всех файлов пользователя и записей в БД -----
+clear_user_files <- function(user_id, base_path = "session_data") {
+  user_dir <- file.path(base_path, paste0("user_", user_id))
+  if (dir.exists(user_dir)) {
+    unlink(user_dir, recursive = TRUE)
+  }
+  conn <- get_db_conn()
+  on.exit(dbDisconnect(conn))
+  dbExecute(conn, "DELETE FROM session_metadata WHERE user_id = ?", params = list(user_id))
   invisible(TRUE)
 }

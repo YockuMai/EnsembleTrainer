@@ -3,6 +3,7 @@
 # =============================================================================
 # Модуль настройки параметров моделей (только UI + сохранение параметров)
 # =============================================================================
+
 params_model <- function() {
   list(
     rf   = list(ntree = 500, mtry = floor(sqrt(5)), nodesize = 5, maxnodes = NULL, replace = TRUE),
@@ -35,7 +36,6 @@ modelParamsUI <- function(id) {
           uiOutput(ns("target_var_ui")),
           br(),
           uiOutput(ns("train_ratio_ui"))
-          # Кнопка обучения УДАЛЕНА
         )
       ),
       # Правая панель с вкладками параметров
@@ -48,7 +48,7 @@ modelParamsUI <- function(id) {
 }
 
 # -----------------------------------------------------------------------------
-# Серверная часть модуля (только синхронизация параметров с session_data)
+# Серверная часть модуля
 # -----------------------------------------------------------------------------
 
 modelParamsServer <- function(id, session_data) {
@@ -64,17 +64,34 @@ modelParamsServer <- function(id, session_data) {
       }
     })
     
-    # ---- Флаг для однократной загрузки статических элементов UI ----
-    initialized <- reactiveVal(FALSE)
+    # ---- Функция для загрузки данных с диска (по путям) ----
+    get_current_data <- function() {
+      # Сначала пробуем предобработанные
+      if (!is.null(session_data$preprocess_path) && file.exists(session_data$preprocess_path)) {
+        return(load_data_frame(session_data$preprocess_path))
+      }
+      # Затем оригинальные
+      if (!is.null(session_data$original_data_path) && file.exists(session_data$original_data_path)) {
+        return(load_data_frame(session_data$original_data_path))
+      }
+      return(NULL)
+    }
     
-    # ---- Загрузка параметров в UI при первом запуске ----
-    # Рендерим чекбоксы сразу с нужными значениями из сессии
+    # ---- Реактивное выражение для данных (пересчитывается при изменении путей) ----
+    data_reactive <- reactive({
+      get_current_data()
+    }) %>% bindEvent(
+      session_data$original_data_path,
+      session_data$preprocess_path,
+      ignoreNULL = FALSE
+    )
+    
+    # ---- Загрузка параметров в UI ----
     output$models_checkbox_ui <- renderUI({
-      # Ждем, пока структура данных точно создастся
       req(session_data$model_params) 
       
       checkboxGroupInput(
-        inputId = ns("models_selected"), # Внутри renderUI обязательно пишем ns()
+        inputId = ns("models_selected"),
         label = NULL,
         choices = c(
           "Случайный лес"          = "rf",
@@ -93,7 +110,6 @@ modelParamsServer <- function(id, session_data) {
       )
     })
     
-    # Рендерим слайдер
     output$train_ratio_ui <- renderUI({
       req(session_data$model_params)
       sliderInput(
@@ -105,16 +121,17 @@ modelParamsServer <- function(id, session_data) {
       )
     })
     
-    # ---- Данные для выбора целевой переменной ----
-    data_reactive <- reactive({
-      req(session_data$preprocess_obj)
-      session_data$preprocess_obj
-    })
-    
     # ---- Выпадающий список целевой переменной (динамический) ----
     output$target_var_ui <- renderUI({
       df <- data_reactive()
-      req(df)
+      if (is.null(df)) {
+        return(
+          div(
+            class = "alert alert-warning",
+            "Данные не загружены. Загрузите данные в разделе 'Загрузка данных'."
+          )
+        )
+      }
       
       cat_cols <- names(df)[sapply(df, is.factor)]
       if (length(cat_cols) == 0) {
@@ -178,16 +195,27 @@ modelParamsServer <- function(id, session_data) {
       do.call(tabsetPanel, c(id = ns("model_tabs"), tabs))
     })
     
+    # ---- Вспомогательная функция для получения количества признаков ----
+    get_n_features <- function() {
+      df <- data_reactive()
+      if (!is.null(df)) {
+        ncol(df) - 1   # вычитаем целевую переменную (если она есть)
+      } else {
+        50   # значение по умолчанию
+      }
+    }
+    
     # ---- Рендеринг параметров для каждой модели ----
     output$params_rf <- renderUI({
       p <- session_data$model_params$params$rf
-      max_mtry <- if (!is.null(session_data$preprocess_obj)) ncol(session_data$preprocess_obj) - 1 else 50
+      n_features <- get_n_features()
+      max_mtry <- max(1, n_features)   # минимум 1
       tagList(
         numericInput(ns("rf_ntree"), "ntree (количество деревьев)",
                      value = p$ntree, min = 10, max = 5000, step = 10),
         numericInput(ns("rf_mtry"), 
                      label = "mtry (число признаков для разбиения)",
-                     value = p$mtry %||% round(sqrt(ncol(session_data$preprocess_obj) - 1)),
+                     value = if (is.null(p$mtry) || p$mtry > max_mtry) floor(sqrt(max_mtry)) else p$mtry,
                      min = 1, max = max_mtry, step = 1),
         numericInput(ns("rf_nodesize"), "nodesize (мин. размер листа)",
                      value = p$nodesize, min = 1, max = 100, step = 1),
@@ -199,22 +227,19 @@ modelParamsServer <- function(id, session_data) {
       )
     })
     
-   output$params_et <- renderUI({
+    output$params_et <- renderUI({
       p <- session_data$model_params$params$et
-      # Определяем максимальное mtry динамически (если доступны данные)
-      max_mtry <- if (!is.null(session_data$preprocess_obj)) ncol(session_data$preprocess_obj) - 1 else 50
-
+      n_features <- get_n_features()
+      max_mtry <- max(1, n_features)
       tagList(
         numericInput(ns("et_ntree"), 
                      label = "num.trees (количество деревьев)",
                      value = p$ntree %||% 500,
                      min = 10, max = 10000, step = 10),
-
         numericInput(ns("et_mtry"), 
                      label = "mtry (число признаков для разбиения)",
-                     value = p$mtry %||% round(sqrt(ncol(session_data$preprocess_obj) - 1)),
+                     value = if (is.null(p$mtry) || p$mtry > max_mtry) floor(sqrt(max_mtry)) else p$mtry,
                      min = 1, max = max_mtry, step = 1),
-
         numericInput(ns("et_nodesize"), 
                      label = "min.node.size (мин. размер листа)",
                      value = p$nodesize %||% 1,
@@ -229,12 +254,10 @@ modelParamsServer <- function(id, session_data) {
                      label = "n.trees (количество деревьев)", 
                      value = p$n.trees %||% 100, 
                      min = 10, max = 10000, step = 10),
-
         numericInput(ns("gbm_interaction.depth"), 
                      label = "interaction.depth (глубина деревьев)", 
                      value = p$interaction.depth %||% 3, 
                      min = 1, max = 100, step = 1),
-
         numericInput(ns("gbm_shrinkage"), 
                      label = "shrinkage (скорость обучения)", 
                      value = p$shrinkage %||% 0.1, 
@@ -249,17 +272,14 @@ modelParamsServer <- function(id, session_data) {
                      label = "nrounds (количество деревьев)", 
                      value = p$nrounds %||% 500, 
                      min = 1, max = 10000, step = 10),
-
         numericInput(ns("xgb_max_depth"), 
                      label = "max_depth (максимальная глубина дерева)", 
                      value = p$max_depth %||% 6, 
                      min = 1, max = 150, step = 1),
-
         numericInput(ns("xgb_eta"), 
                      label = "eta (скорость обучения, шаг уменьшения весов)", 
                      value = p$eta %||% 0.3, 
                      min = 0.001, max = 1, step = 0.001),
-
         numericInput(ns("xgb_subsample"), 
                      label = "subsample (доля строк для каждого дерева)", 
                      value = p$subsample %||% 1, 
@@ -329,7 +349,7 @@ modelParamsServer <- function(id, session_data) {
     output$params_knn <- renderUI({
       p <- session_data$model_params$params$knn
       tagList(
-        numericInput(ns("knn_k"), "k (кол-во соседей)", value = p$k, min = 1, max = 50, step = 1),
+        numericInput(ns("knn_k"), "k (кол-во соседей)", value = p$k, min = 1, max = 50, step = 1)
       )
     })
     
@@ -377,21 +397,21 @@ modelParamsServer <- function(id, session_data) {
     observeEvent(input$rf_mtry, { session_data$model_params$params$rf$mtry <- input$rf_mtry })
     observeEvent(input$rf_nodesize, { session_data$model_params$params$rf$nodesize <- input$rf_nodesize })
     observeEvent(input$rf_ntree, { session_data$model_params$params$rf$ntree <- input$rf_ntree })
+    observeEvent(input$rf_maxnodes, { session_data$model_params$params$rf$maxnodes <- input$rf_maxnodes })
+    observeEvent(input$rf_replace, { session_data$model_params$params$rf$replace <- as.logical(input$rf_replace) })
     
     observeEvent(input$et_mtry, { session_data$model_params$params$et$mtry <- input$et_mtry })
     observeEvent(input$et_nodesize, { session_data$model_params$params$et$nodesize <- input$et_nodesize })
     observeEvent(input$et_ntree, { session_data$model_params$params$et$ntree <- input$et_ntree })
     
-    observeEvent(input$gbm_depth, { session_data$model_params$params$gbm$interaction.depth <- input$gbm_depth })
+    observeEvent(input$gbm_n.trees, { session_data$model_params$params$gbm$n.trees <- input$gbm_n.trees })
+    observeEvent(input$gbm_interaction.depth, { session_data$model_params$params$gbm$interaction.depth <- input$gbm_interaction.depth })
     observeEvent(input$gbm_shrinkage, { session_data$model_params$params$gbm$shrinkage <- input$gbm_shrinkage })
-    observeEvent(input$gbm_ntrees, { session_data$model_params$params$gbm$n.trees <- input$gbm_ntrees })
-    observeEvent(input$gbm_bag, { session_data$model_params$params$gbm$bag.fraction <- input$gbm_bag })
     
-    observeEvent(input$xgb_eta, { session_data$model_params$params$xgb$eta <- input$xgb_eta })
-    observeEvent(input$xgb_depth, { session_data$model_params$params$xgb$max_depth <- input$xgb_depth })
-    observeEvent(input$xgb_subsample, { session_data$model_params$params$xgb$subsample <- input$xgb_subsample })
-    observeEvent(input$xgb_colsample, { session_data$model_params$params$xgb$colsample_bytree <- input$xgb_colsample })
     observeEvent(input$xgb_nrounds, { session_data$model_params$params$xgb$nrounds <- input$xgb_nrounds })
+    observeEvent(input$xgb_max_depth, { session_data$model_params$params$xgb$max_depth <- input$xgb_max_depth })
+    observeEvent(input$xgb_eta, { session_data$model_params$params$xgb$eta <- input$xgb_eta })
+    observeEvent(input$xgb_subsample, { session_data$model_params$params$xgb$subsample <- input$xgb_subsample })
     
     observeEvent(input$ada_mfinal, { session_data$model_params$params$ada$mfinal <- input$ada_mfinal })
     observeEvent(input$ada_maxdepth, { session_data$model_params$params$ada$maxdepth <- input$ada_maxdepth })
@@ -400,21 +420,14 @@ modelParamsServer <- function(id, session_data) {
     observeEvent(input$stack_base_models, { session_data$model_params$params$stack$base_models <- input$stack_base_models })
     observeEvent(input$stack_meta_model, { session_data$model_params$params$stack$meta_model <- input$stack_meta_model })
     
-    observeEvent(input$glm_family, { session_data$model_params$params$glm$family <- input$glm_family })
     observeEvent(input$glm_maxit, { session_data$model_params$params$glm$maxit <- input$glm_maxit })
     
     observeEvent(input$knn_k, { session_data$model_params$params$knn$k <- input$knn_k })
-    observeEvent(input$knn_kernel, { session_data$model_params$params$knn$kernel <- input$knn_kernel })
     
     observeEvent(input$rpart_cp, { session_data$model_params$params$rpart$cp <- input$rpart_cp })
-    observeEvent(input$rpart_minsplit, { session_data$model_params$params$rpart$minsplit <- input$rpart_minsplit })
     observeEvent(input$rpart_maxdepth, { session_data$model_params$params$rpart$maxdepth <- input$rpart_maxdepth })
     
-    observeEvent(input$nb_use_kernel, { session_data$model_params$params$nb$use_kernel <- as.logical(input$nb_use_kernel) })
     observeEvent(input$nb_fL, { session_data$model_params$params$nb$fL <- input$nb_fL })
-    
-    observeEvent(input$lda_method, { session_data$model_params$params$lda$method <- input$lda_method })
-    observeEvent(input$lda_prior, { session_data$model_params$params$lda$prior <- input$lda_prior })
     
     # ---- Модуль ничего не возвращает, все данные доступны через session_data ----
   })

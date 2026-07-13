@@ -18,6 +18,7 @@ library(adabag)
 library(ada)
 library(kknn)
 library(MASS)
+library(fst)
 
 source("modules/mainModule.R")
 
