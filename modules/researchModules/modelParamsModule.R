@@ -99,7 +99,7 @@ modelParamsServer <- function(id, session_data) {
       sliderInput(
         inputId = ns("train_ratio"),
         label = "Доля обучающей выборки",
-        min = 0.1, max = 0.9, 
+        min = 0.5, max = 0.9, 
         value = session_data$model_params$train_ratio, 
         step = 0.05
       )

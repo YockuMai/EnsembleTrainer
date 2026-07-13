@@ -76,7 +76,7 @@ save_user_data <- function(user_id, session_data, base_path = "session_data") {
   
   for (key in names(session_data)) {
     data_item <- session_data[[key]]
-    if (is.null(data_item)) next
+    #if (is.null(data_item)) next
     
     file_path <- file.path(user_dir, paste0(key, ".rds"))
     saveRDS(data_item, file_path)

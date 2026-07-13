@@ -7,6 +7,7 @@ source("modules/researchModules/mainResearchModule.R")
 source("modules/researchModules/loadDataModule.R")
 source("modules/researchModules/preprocessDataModule.R")
 source("modules/researchModules/modelParamsModule.R")
+source("modules/researchModules/modelTrainingModule.R")
 
 source("modules/learnModules/mainLearnModule.R")
 
@@ -43,6 +44,7 @@ create_server <- function() {
     loadDataServer("load", app_state$session_data)
     preprocessServer("preprocess", app_state$session_data)
     modelParamsServer("model_params", app_state$session_data)
+    modelTrainingServer("model_training", app_state$session_data)
     
     # ---- Автосохранение ----
     debounced_data <- reactive({
