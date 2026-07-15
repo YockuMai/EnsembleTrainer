@@ -17,7 +17,7 @@ practic_ui <- function() {
     ),
     tabPanel("Прогнозирование",
       h3("Прогнозирование"),
-      #modelPredictionUI("model_prediction")
+      predictionUI("prediction")
     )
   )
 }
