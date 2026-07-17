@@ -1,4 +1,7 @@
 source("R/db_functions.R")
+source("R/utils.R")
+source("R/model_trainers.R")
+source("R/stacking_utils.R")
 
 source("modules/authModule.R")
 source("modules/appModule.R")

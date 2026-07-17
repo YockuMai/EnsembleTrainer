@@ -1,4 +1,4 @@
-practic_ui <- function() {
+practice_ui <- function() {
   tabsetPanel(
     tabPanel("Загрузка данных",
       loadDataUI("load")

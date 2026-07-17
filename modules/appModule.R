@@ -59,7 +59,7 @@ appServer <- function(id, app_state) {
                          "← Назад к выбору режима",
                          class = "btn-secondary")
           ),
-          practic_ui()
+          practice_ui()
         )
       }
     })

@@ -55,12 +55,12 @@ authenticate_user <- function(username, password) {
   res <- dbGetQuery(conn, "SELECT id, password_hash FROM users WHERE username = ?",
                     params = list(username))
   if (nrow(res) == 0) {
-    return(list(success = FALSE, user_id = NULL, message = "Неверный логин или пароль"))
+    return(list(success = FALSE, user_id = NULL))
   }
   if (bcrypt::checkpw(password, res$password_hash)) {
-    return(list(success = TRUE, user_id = res$id[1], message = "Вход выполнен"))
+    return(list(success = TRUE, user_id = res$id[1]))
   } else {
-    return(list(success = FALSE, user_id = NULL, message = "Неверный логин или пароль"))
+    return(list(success = FALSE, user_id = NULL))
   }
 }
 
