@@ -87,10 +87,11 @@ train_meta_model <- function(meta_train, meta_test, meta_model_id, y_train_level
       if (is_binary) {
         mod <- glm(Class ~ ., data = meta_train, family = binomial(link = "logit"))
         probs_positive <- predict(mod, newdata = meta_test, type = "response")
-        probs <- cbind(1 - probs_positive, probs_positive)
+        probs <- matrix(c(1 - probs_positive, probs_positive), nrow = 1)
       } else {
         mod <- nnet::multinom(Class ~ ., data = meta_train, trace = FALSE, maxit = meta_params$maxit %||% 500)
         probs <- predict(mod, newdata = meta_test, type = "probs")
+        if (!is.matrix(probs)) probs <- matrix(probs, nrow = 1)
       }
       colnames(probs) <- y_train_levels
       list(model = mod, probs = probs)
@@ -129,6 +130,9 @@ train_meta_model <- function(meta_train, meta_test, meta_model_id, y_train_level
     "xgb" = {
       meta_train_num <- df_to_numeric_matrix(meta_train[, !(names(meta_train) %in% "Class")])
       meta_test_num <- df_to_numeric_matrix(meta_test)
+      # Убираем colnames для xgboost
+      colnames(meta_train_num) <- NULL
+      colnames(meta_test_num) <- NULL
       meta_train_num <- meta_train_num[, colSums(is.na(meta_train_num)) == 0, drop = FALSE]
       meta_test_num <- meta_test_num[, colSums(is.na(meta_test_num)) == 0, drop = FALSE]
       
@@ -149,13 +153,16 @@ train_meta_model <- function(meta_train, meta_test, meta_model_id, y_train_level
       
       mod <- xgboost::xgb.train(xgb_params, dtrain, nrounds = meta_params$nrounds %||% 100, verbose = 0)
       raw_pred <- predict(mod, dtest)
+      raw_vec <- c(raw_pred)
       n_classes <- length(y_train_levels)
       if (n_classes == 2) {
-        probs <- matrix(c(1 - raw_pred, raw_pred), nrow = 1)
+        # Бинарный случай: raw_vec - вектор вероятностей класса 1
+        probs <- cbind(1 - raw_vec, raw_vec)
+        colnames(probs) <- y_train_levels
       } else {
-        probs <- matrix(as.numeric(raw_pred), nrow = 1, byrow = TRUE)
+        probs <- matrix(raw_vec, nrow = nrow(meta_test), byrow = TRUE)
+        colnames(probs) <- y_train_levels
       }
-      colnames(probs) <- y_train_levels
       list(model = mod, probs = probs)
     },
     
@@ -236,6 +243,10 @@ train_meta_model <- function(meta_train, meta_test, meta_model_id, y_train_level
       )
       probs <- mod$prob
       colnames(probs) <- y_train_levels
+      # Сохраняем обучающие данные для последующего предсказания
+      mod$train_data <- train_kknn
+      mod$k_value <- meta_params$k %||% 5
+      mod$kernel_value <- meta_params$kernel %||% "optimal"
       list(model = mod, probs = probs)
     },
     

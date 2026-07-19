@@ -171,7 +171,9 @@ save_model <- function(model, user_id, model_id, base_path = "session_data") {
   if (!dir.exists(user_dir)) dir.create(user_dir, recursive = TRUE)
   timestamp <- format(Sys.time(), "%Y%m%d%H%M%S")
   
-  if (inherits(model, "xgb.Booster")) {
+  # Для стекинга всегда используем RDS, т.к. нужно сохранить stack_* поля
+  # Для обычных xgboost используем xgb.save
+  if (inherits(model, "xgb.Booster") && is.null(model$stack_base_models_trained)) {
     file_path <- file.path(user_dir, paste0(model_id, "_", timestamp, ".xgb"))
     xgboost::xgb.save(model, file_path)
   } else {

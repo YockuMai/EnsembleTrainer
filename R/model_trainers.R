@@ -46,213 +46,97 @@ train_single_model <- function(model_id, params, train_data, test_data, target) 
   X_test <- test_data[, !(names(test_data) %in% target), drop = FALSE]
   y_test <- test_data[[target]]
   
-  switch(
-    model_id,
-    
+  switch(model_id,
     "rf" = {
-      mod <- randomForest::randomForest(
-        x = X_train, y = y_train,
-        ntree = params$ntree %||% 500,
-        mtry = params$mtry %||% floor(sqrt(ncol(X_train))),
-        nodesize = params$nodesize %||% 5,
-        importance = FALSE
-      )
+      mod <- randomForest::randomForest(x = X_train, y = y_train,
+        ntree = params$ntree %||% 500, mtry = params$mtry %||% floor(sqrt(ncol(X_train))),
+        nodesize = params$nodesize %||% 5, importance = FALSE)
       probs <- predict(mod, X_test, type = "prob")
-      metrics <- calc_metrics(probs, y_test)
-      list(model = mod, metrics = metrics, probs = probs, class = "randomForest",
-           label = "RandomForest")
+      list(model = mod, metrics = calc_metrics(probs, y_test), probs = probs, class = "randomForest", label = "RandomForest")
     },
-    
     "et" = {
-      mod <- ranger::ranger(
-        dependent.variable.name = target,
-        data = train_data,
-        num.trees = params$ntree %||% 500,
-        mtry = params$mtry %||% floor(sqrt(ncol(train_data) - 1)),
-        min.node.size = params$nodesize %||% 5,
-        splitrule = "extratrees",
-        replace = FALSE,
-        sample.fraction = 1,
-        probability = TRUE,
-        seed = 123
-      )
+      mod <- ranger::ranger(dependent.variable.name = target, data = train_data,
+        num.trees = params$ntree %||% 500, mtry = params$mtry %||% floor(sqrt(ncol(train_data)-1)),
+        min.node.size = params$nodesize %||% 5, splitrule = "extratrees",
+        replace = FALSE, sample.fraction = 1, probability = TRUE, seed = 123)
       probs <- predict(mod, data = X_test)$predictions
       colnames(probs) <- levels(y_train)
-      metrics <- calc_metrics(probs, y_test)
-      list(model = mod, metrics = metrics, probs = probs, class = "ranger",
-           label = "ExtraTrees")
+      list(model = mod, metrics = calc_metrics(probs, y_test), probs = probs, class = "ranger", label = "ExtraTrees")
     },
-    
     "gbm" = {
-      mod <- gbm::gbm(
-        stats::formula(paste(target, "~ .")),
-        data = train_data,
-        n.trees = params$n.trees %||% 500,
-        interaction.depth = params$interaction.depth %||% 3,
-        shrinkage = params$shrinkage %||% 0.1,
-        bag.fraction = params$bag.fraction %||% 0.5,
-        distribution = "multinomial",
-        verbose = FALSE
-      )
+      mod <- gbm::gbm(stats::formula(paste(target, "~ .")), data = train_data,
+        n.trees = params$n.trees %||% 500, interaction.depth = params$interaction.depth %||% 3,
+        shrinkage = params$shrinkage %||% 0.1, bag.fraction = params$bag.fraction %||% 0.5,
+        distribution = "multinomial", verbose = FALSE)
       p_raw <- predict(mod, X_test, n.trees = params$n.trees %||% 500, type = "response")
-      if (is.array(p_raw) && length(dim(p_raw)) == 3) {
-        probs <- as.matrix(p_raw[, , 1])
-      } else {
-        probs <- as.matrix(p_raw)
-      }
+      probs <- if (is.array(p_raw) && length(dim(p_raw)) == 3) as.matrix(p_raw[, , 1]) else as.matrix(p_raw)
       colnames(probs) <- levels(y_train)
-      metrics <- calc_metrics(probs, y_test)
-      list(model = mod, metrics = metrics, probs = probs, class = "gbm",
-           label = "GBM")
+      list(model = mod, metrics = calc_metrics(probs, y_test), probs = probs, class = "gbm", label = "GBM")
     },
-    
     "xgb" = {
-      X_train_num <- df_to_numeric_matrix(X_train)
-      X_test_num <- df_to_numeric_matrix(X_test)
-      if (any(is.na(X_train_num)) || any(is.na(X_test_num))) {
-        stop("В данных есть пропуски (NA). XGBoost не может их обработать.")
-      }
-      y_train_xgb <- as.numeric(y_train) - 1
-      y_test_xgb <- as.numeric(y_test) - 1
-      
-      dtrain <- xgboost::xgb.DMatrix(X_train_num, label = y_train_xgb)
-      dtest <- xgboost::xgb.DMatrix(X_test_num, label = y_test_xgb)
-      
-      xgb_params <- list(
-        objective = "multi:softprob",
-        num_class = length(unique(y_train)),
-        eval_metric = "mlogloss",
-        max_depth = params$max_depth %||% 6,
-        eta = params$eta %||% 0.3,
-        subsample = params$subsample %||% 1,
-        colsample_bytree = params$colsample_bytree %||% 1,
-        min_child_weight = 1
-      )
-      mod <- xgboost::xgb.train(xgb_params, dtrain, nrounds = params$nrounds %||% 100, verbose = 0)
-      raw_pred <- predict(mod, dtest)
-      n_classes <- length(levels(y_train))
-      if (n_classes == 2) {
-        probs <- matrix(c(1 - raw_pred, raw_pred), nrow = 1)
-      } else {
-        probs <- matrix(as.numeric(raw_pred), nrow = nrow(X_test), byrow = TRUE)
-      }
+      X_train_num <- df_to_numeric_matrix(X_train); X_test_num <- df_to_numeric_matrix(X_test)
+      if (any(is.na(X_train_num)) || any(is.na(X_test_num))) stop("NA в данных")
+      dtrain <- xgboost::xgb.DMatrix(X_train_num, label = as.numeric(y_train)-1)
+      dtest <- xgboost::xgb.DMatrix(X_test_num, label = as.numeric(y_test)-1)
+      mod <- xgboost::xgb.train(list(objective = "multi:softprob", num_class = length(unique(y_train)),
+        max_depth = params$max_depth %||% 6, eta = params$eta %||% 0.3, subsample = params$subsample %||% 1), dtrain,
+        nrounds = params$nrounds %||% 100, verbose = 0)
+      raw <- c(predict(mod, dtest))
+      ncls <- length(levels(y_train))
+      probs <- if (ncls == 2) cbind(1-raw, raw) else matrix(raw, nrow = nrow(X_test), byrow = TRUE)
       colnames(probs) <- levels(y_train)
-      metrics <- calc_metrics(probs, y_test)
-      list(model = mod, metrics = metrics, probs = probs, class = "xgboost",
-           label = "XGBoost")
+      list(model = mod, metrics = calc_metrics(probs, y_test), probs = probs, class = "xgboost", label = "XGBoost")
     },
-    
     "ada" = {
       if (is_binary_classification(y_train)) {
-        mod <- ada::ada(
-          stats::formula(paste(target, "~ .")),
-          data = train_data,
-          iter = params$mfinal %||% 100,
-          loss = "exponential"
-        )
+        mod <- ada::ada(stats::formula(paste(target, "~ .")), data = train_data,
+          iter = params$mfinal %||% 100, loss = "exponential")
         probs <- predict(mod, newdata = test_data, type = "prob")
       } else {
-        mod <- adabag::boosting(
-          stats::formula(paste(target, "~ .")),
-          data = train_data,
-          mfinal = params$mfinal %||% 100,
-          control = rpart::rpart.control(maxdepth = params$maxdepth %||% 2, minsplit = 10),
-          coeflearn = params$coeflearn %||% "Breiman"
-        )
-        pred <- predict(mod, newdata = test_data)
-        probs <- pred$prob
+        mod <- adabag::boosting(stats::formula(paste(target, "~ .")), data = train_data,
+          mfinal = params$mfinal %||% 100, coeflearn = params$coeflearn %||% "Breiman",
+          control = rpart::rpart.control(maxdepth = params$maxdepth %||% 2, minsplit = 10))
+        probs <- predict(mod, newdata = test_data)$prob
       }
       colnames(probs) <- levels(y_train)
-      metrics <- calc_metrics(probs, y_test)
-      list(model = mod, metrics = metrics, probs = probs, class = "ada",
-           label = "AdaBoost")
+      list(model = mod, metrics = calc_metrics(probs, y_test), probs = probs, class = "ada", label = "AdaBoost")
     },
-    
     "glm" = {
       if (is_binary_classification(y_train)) {
-        mod <- glm(
-          stats::formula(paste(target, "~ .")),
-          data = train_data,
-          family = binomial(link = "logit")
-        )
-        probs_positive <- predict(mod, X_test, type = "response")
-        probs <- cbind(1 - probs_positive, probs_positive)
+        mod <- glm(stats::formula(paste(target, "~ .")), data = train_data, family = binomial())
+        probs <- cbind(1 - predict(mod, X_test, type = "response"), predict(mod, X_test, type = "response"))
       } else {
-        mod <- nnet::multinom(
-          stats::formula(paste(target, "~ .")),
-          data = train_data,
-          maxit = params$maxit %||% 100,
-          trace = FALSE
-        )
+        mod <- nnet::multinom(stats::formula(paste(target, "~ .")), data = train_data, maxit = params$maxit %||% 100, trace = FALSE)
         probs <- predict(mod, X_test, type = "probs")
       }
       colnames(probs) <- levels(y_train)
-      metrics <- calc_metrics(probs, y_test)
-      list(model = mod, metrics = metrics, probs = probs, 
-           class = if (is_binary_classification(y_train)) "glm" else "multinom",
-           label = "LogReg")
+      list(model = mod, metrics = calc_metrics(probs, y_test), probs = probs, class = "glm", label = "LogReg")
     },
-    
     "knn" = {
       train_kknn <- cbind(Class = y_train, X_train)
-      test_kknn <- X_test
-      mod <- kknn::kknn(
-        Class ~ .,
-        train = train_kknn,
-        test = test_kknn,
-        k = params$k %||% 5,
-        kernel = params$kernel %||% "optimal"
-      )
-      probs <- mod$prob
-      colnames(probs) <- levels(y_train)
-      metrics <- calc_metrics(probs, y_test)
-      # Сохраняем обучающие данные и параметры для предсказания
-      mod$train_data <- train_kknn
-      mod$k_value <- params$k %||% 5
-      mod$kernel_value <- params$kernel %||% "optimal"
-      list(model = mod, metrics = metrics, probs = probs, class = "kknn",
-           label = "kNN")
+      mod <- kknn::kknn(Class ~ ., train = train_kknn, test = cbind(Class = y_test, X_test), k = params$k %||% 5, kernel = params$kernel %||% "optimal")
+      probs <- mod$prob; colnames(probs) <- levels(y_train)
+      mod$train_data <- train_kknn; mod$k_value <- params$k %||% 5; mod$kernel_value <- params$kernel %||% "optimal"
+      list(model = mod, metrics = calc_metrics(probs, y_test), probs = probs, class = "kknn", label = "kNN")
     },
-    
     "rpart" = {
-      mod <- rpart::rpart(
-        stats::formula(paste(target, "~ .")),
-        data = train_data,
-        cp = params$cp %||% 0.01,
-        minsplit = params$minsplit %||% 20,
-        maxdepth = params$maxdepth %||% 30
-      )
+      mod <- rpart::rpart(stats::formula(paste(target, "~ .")), data = train_data,
+        cp = params$cp %||% 0.01, minsplit = params$minsplit %||% 20, maxdepth = params$maxdepth %||% 30)
       probs <- predict(mod, X_test, type = "prob")
-      metrics <- calc_metrics(probs, y_test)
-      list(model = mod, metrics = metrics, probs = probs, class = "rpart",
-           label = "rpart")
+      list(model = mod, metrics = calc_metrics(probs, y_test), probs = probs, class = "rpart", label = "rpart")
     },
-    
     "nb" = {
-      mod <- e1071::naiveBayes(
-        stats::formula(paste(target, "~ .")),
-        data = train_data,
-        laplace = params$fL %||% 0
-      )
+      mod <- e1071::naiveBayes(stats::formula(paste(target, "~ .")), data = train_data, laplace = params$fL %||% 0)
       probs <- predict(mod, X_test, type = "raw")
       if (!is.matrix(probs)) probs <- as.matrix(probs)
       colnames(probs) <- levels(y_train)
-      metrics <- calc_metrics(probs, y_test)
-      list(model = mod, metrics = metrics, probs = probs, class = "naiveBayes",
-           label = "NaiveBayes")
+      list(model = mod, metrics = calc_metrics(probs, y_test), probs = probs, class = "naiveBayes", label = "NaiveBayes")
     },
-    
     "lda" = {
-      mod <- MASS::lda(
-        stats::formula(paste(target, "~ .")),
-        data = train_data
-      )
+      mod <- MASS::lda(stats::formula(paste(target, "~ .")), data = train_data)
       probs <- predict(mod, X_test)$posterior
-      metrics <- calc_metrics(probs, y_test)
-      list(model = mod, metrics = metrics, probs = probs, class = "lda",
-           label = "LDA")
+      list(model = mod, metrics = calc_metrics(probs, y_test), probs = probs, class = "lda", label = "LDA")
     },
-    
     stop(paste("Неизвестная модель:", model_id))
   )
 }
@@ -260,210 +144,77 @@ train_single_model <- function(model_id, params, train_data, test_data, target) 
 # =============================================================================
 # Предсказание одной обученной моделью
 # =============================================================================
-# Всегда возвращает list(class = "имя_класса", prob = матрица_вероятностей)
-
 predict_with_model <- function(mod, new_data, model_id, model_params = list(), class_levels = NULL) {
-  switch(
-    model_id,
-    
-    "rf" = {
-      pred <- predict(mod, newdata = new_data, type = "prob")
-      classes <- colnames(pred)
-      class_idx <- apply(pred, 1, which.max)
-      list(class = classes[class_idx], prob = pred)
-    },
-    
-    "et" = {
-      pred <- predict(mod, data = new_data)
-      probs <- pred$predictions
-      classes <- colnames(probs)
-      class_idx <- apply(probs, 1, which.max)
-      list(class = classes[class_idx], prob = probs)
-    },
-    
+  switch(model_id,
+    "rf" = { pred <- predict(mod, newdata = new_data, type = "prob"); list(class = colnames(pred)[apply(pred,1,which.max)], prob = pred) },
+    "et" = { pred <- predict(mod, data = new_data); p <- pred$predictions; list(class = colnames(p)[apply(p,1,which.max)], prob = p) },
     "gbm" = {
       n_trees <- model_params$n.trees %||% 100
       pred <- predict(mod, newdata = new_data, n.trees = n_trees, type = "response")
       if (is.array(pred) && length(dim(pred)) == 3) {
-        # Для 1 строки: pred[1, , 1] — вектор вероятностей
-        probs <- matrix(pred[1, , 1], nrow = 1)
-        classes <- class_levels %||% paste0("Class", 1:ncol(probs))
-        colnames(probs) <- classes
-        class_idx <- which.max(probs[1, ])
-        list(class = classes[class_idx], prob = probs)
+        p <- matrix(pred[1,,1], nrow=1)
+        cls <- class_levels %||% paste0("Class",1:ncol(p))
+        colnames(p) <- cls; list(class = cls[which.max(p[1,])], prob = p)
       } else if (is.matrix(pred)) {
-        probs <- pred
-        classes <- colnames(probs)
-        if (is.null(classes)) classes <- class_levels %||% paste0("Class", 1:ncol(probs))
-        colnames(probs) <- classes
-        class_idx <- apply(probs, 1, which.max)
-        list(class = classes[class_idx], prob = probs)
+        p <- pred; cls <- colnames(p) %||% class_levels %||% paste0("Class",1:ncol(p))
+        colnames(p) <- cls; list(class = cls[apply(p,1,which.max)], prob = p)
       } else {
-        # Вектор — бинарный случай
-        classes <- class_levels %||% c("0", "1")
-        probs <- matrix(pred, nrow = 1)
-        colnames(probs) <- classes
-        class_idx <- which.max(probs[1, ])
-        list(class = classes[class_idx], prob = probs)
+        cls <- class_levels %||% c("0","1"); p <- matrix(pred, nrow=1)
+        colnames(p) <- cls; list(class = cls[which.max(p[1,])], prob = p)
       }
     },
-    
     "xgb" = {
-      new_data_num <- df_to_numeric_matrix(new_data)
-      dtest <- xgboost::xgb.DMatrix(new_data_num)
-      raw_pred <- predict(mod, dtest)
-      n_classes <- length(class_levels %||% c("0", "1"))
-      if (n_classes == 2 && !is.null(dim(raw_pred))) {
-        probs <- matrix(as.numeric(raw_pred), nrow = 1, byrow = TRUE)
-        classes <- class_levels %||% paste0("Class", 1:ncol(probs))
-        colnames(probs) <- classes
-        class_idx <- which.max(probs[1, ])
-        list(class = classes[class_idx], prob = probs)
+      raw <- c(predict(mod, xgboost::xgb.DMatrix(df_to_numeric_matrix(new_data))))
+      ncls <- length(class_levels %||% c("0","1"))
+      if (ncls == 2) {
+        cls <- class_levels %||% c("0","1"); p <- cbind(1-raw, raw); colnames(p) <- cls; list(class = cls[ifelse(raw>0.5,2,1)], prob = p)
       } else {
-        classes <- class_levels %||% c("0", "1")
-        probs_matrix <- if (is.null(dim(raw_pred))) {
-          matrix(c(1 - raw_pred, raw_pred), nrow = 1)
-        } else {
-          matrix(as.numeric(raw_pred), nrow = 1, byrow = TRUE)
-        }
-        colnames(probs_matrix) <- classes
-        class_idx <- ifelse(probs_matrix[1, 2] > 0.5, 2, 1)
-        list(class = classes[class_idx], prob = probs_matrix)
+        p <- matrix(raw, nrow=1); cls <- class_levels %||% paste0("Class",1:ncol(p)); colnames(p) <- cls; list(class = cls[which.max(p[1,])], prob = p)
       }
     },
-    
     "ada" = {
-      if (inherits(mod, "ada")) {
-        pred <- predict(mod, newdata = new_data, type = "prob")
-        classes <- colnames(pred)
-        class_idx <- apply(pred, 1, which.max)
-        list(class = classes[class_idx], prob = pred)
-      } else {
-        pred <- predict(mod, newdata = new_data)
-        probs <- pred$prob
-        classes <- colnames(probs)
-        if (is.null(classes)) classes <- class_levels %||% paste0("Class", 1:ncol(probs))
-        colnames(probs) <- classes
-        class_idx <- apply(probs, 1, which.max)
-        list(class = classes[class_idx], prob = probs)
-      }
+      if (inherits(mod, "ada")) { pred <- predict(mod, newdata = new_data, type = "prob"); list(class = colnames(pred)[apply(pred,1,which.max)], prob = pred) }
+      else { pred <- predict(mod, newdata = new_data); list(class = as.character(pred$class), prob = pred$prob) }
     },
-    
     "glm" = {
       if (inherits(mod, "glm")) {
-        prob_pos <- predict(mod, newdata = new_data, type = "response")
-        classes <- class_levels %||% c("0", "1")
-        probs <- matrix(c(1 - prob_pos, prob_pos), nrow = 1, dimnames = list(NULL, classes))
-        class_idx <- ifelse(prob_pos > 0.5, 2, 1)
-        list(class = classes[class_idx], prob = probs)
+        pp <- predict(mod, newdata = new_data, type = "response")
+        cls <- class_levels %||% c("0","1"); p <- cbind(1-pp, pp); colnames(p) <- cls; list(class = cls[ifelse(pp>0.5,2,1)], prob = p)
       } else {
         pred <- predict(mod, newdata = new_data, type = "probs")
-        classes <- colnames(pred)
-        if (is.null(classes)) classes <- class_levels %||% paste0("Class", 1:ncol(pred))
-        if (!is.matrix(pred)) pred <- matrix(pred, nrow = 1)
-        colnames(pred) <- classes
-        class_idx <- apply(pred, 1, which.max)
-        list(class = classes[class_idx], prob = pred)
+        if (!is.matrix(pred)) pred <- matrix(pred, nrow=1)
+        cls <- colnames(pred) %||% class_levels %||% paste0("Class",1:ncol(pred))
+        colnames(pred) <- cls; list(class = cls[apply(pred,1,which.max)], prob = pred)
       }
     },
-    
     "knn" = {
-      # Для kknn нужно передать обучающие данные и параметры
-      train_data <- model_params$train_data
-      k_val <- model_params$k %||% 5
-      kernel_val <- model_params$kernel %||% "optimal"
-      
-      if (is.null(train_data)) {
-        # Пробуем достать из объекта модели
-        train_data <- mod$train_data
-        k_val <- mod$k_value %||% k_val
-        kernel_val <- mod$kernel_value %||% kernel_val
-      }
-      
-      if (is.null(train_data)) {
-        stop("Для kNN не сохранены обучающие данные. Переобучите модель.")
-      }
-      
-      pred <- kknn::kknn(
-        Class ~ .,
-        train = train_data,
-        test = new_data,
-        k = k_val,
-        kernel = kernel_val
-      )
-      probs <- pred$prob
-      classes <- colnames(probs)
-      if (is.null(classes)) classes <- class_levels %||% paste0("Class", 1:ncol(probs))
-      colnames(probs) <- classes
-      list(class = as.character(pred$fitted.values), prob = probs)
+      td <- model_params$train_data %||% mod$train_data
+      kv <- model_params$k %||% mod$k_value %||% 5
+      kr <- model_params$kernel %||% mod$kernel_value %||% "optimal"
+      if (is.null(td)) stop("Для kNN не сохранены обучающие данные")
+      pred <- kknn::kknn(Class ~ ., train = td, test = new_data, k = kv, kernel = kr)
+      cls <- colnames(pred$prob) %||% class_levels %||% paste0("Class",1:ncol(pred$prob))
+      colnames(pred$prob) <- cls; list(class = as.character(pred$fitted.values), prob = pred$prob)
     },
-    
-    "rpart" = {
-      pred <- predict(mod, newdata = new_data, type = "prob")
-      classes <- colnames(pred)
-      class_idx <- apply(pred, 1, which.max)
-      list(class = classes[class_idx], prob = pred)
-    },
-    
+    "rpart" = { pred <- predict(mod, newdata = new_data, type = "prob"); list(class = colnames(pred)[apply(pred,1,which.max)], prob = pred) },
     "nb" = {
       pred <- predict(mod, newdata = new_data, type = "raw")
       if (!is.matrix(pred)) pred <- as.matrix(pred)
-      classes <- colnames(pred)
-      if (is.null(classes)) classes <- class_levels %||% paste0("Class", 1:ncol(pred))
-      colnames(pred) <- classes
-      class_idx <- apply(pred, 1, which.max)
-      list(class = classes[class_idx], prob = pred)
+      cls <- colnames(pred) %||% class_levels %||% paste0("Class",1:ncol(pred))
+      colnames(pred) <- cls; list(class = cls[apply(pred,1,which.max)], prob = pred)
     },
-    
-    "lda" = {
-      pred <- predict(mod, newdata = new_data)
-      probs <- pred$posterior
-      classes <- colnames(probs)
-      if (is.null(classes)) classes <- class_levels %||% paste0("Class", 1:ncol(probs))
-      colnames(probs) <- classes
-      list(class = as.character(pred$class), prob = probs)
-    },
-    
+    "lda" = { pred <- predict(mod, newdata = new_data); list(class = as.character(pred$class), prob = pred$posterior) },
     "stack" = {
-      # Для стекинга model_params = stack$params
-      meta_model_id <- model_params$meta_model %||% "glm"
-      meta_params <- model_params$meta_params %||% list()
-      
-      # Проверяем, есть ли сохранённые обученные базовые модели
       if (!is.null(mod$stack_base_models_trained)) {
-        meta_test <- predict_stack_base_models(
-          mod$stack_base_models_trained,
-          new_data,
-          mod$stack_class_levels
-        )
-        pred_result <- predict_with_model(mod, meta_test, meta_model_id, meta_params, class_levels)
-        return(pred_result)
+        # Генерируем мета-признаки через predict_stack_base_models
+        meta_test <- predict_stack_base_models(mod$stack_base_models_trained, new_data, mod$stack_class_levels)
+        return(predict_with_model(mod, meta_test, mod$stack_meta_model %||% "glm", mod$stack_meta_params %||% list(), class_levels))
       }
-      
-      # Иначе пытаемся предсказать напрямую
       pred <- predict(mod, newdata = new_data)
-      if (is.factor(pred)) {
-        classes <- levels(pred)
-        probs <- matrix(0, nrow = 1, ncol = length(classes))
-        colnames(probs) <- classes
-        probs[1, as.character(pred)] <- 1
-        list(class = as.character(pred), prob = probs)
-      } else if (is.matrix(pred) || is.data.frame(pred)) {
-        probs <- as.matrix(pred)
-        classes <- colnames(probs)
-        if (is.null(classes)) classes <- class_levels %||% paste0("Class", 1:ncol(probs))
-        colnames(probs) <- classes
-        class_idx <- apply(probs, 1, which.max)
-        list(class = classes[class_idx], prob = probs)
-      } else {
-        classes <- class_levels %||% c("0", "1")
-        probs <- matrix(c(1 - as.numeric(pred), as.numeric(pred)), nrow = 1)
-        colnames(probs) <- classes
-        class_idx <- which.max(probs[1, ])
-        list(class = classes[class_idx], prob = probs)
-      }
+      if (is.factor(pred)) { cls <- levels(pred); p <- matrix(0,1,length(cls), dimnames=list(NULL,cls)); p[1,as.character(pred)] <- 1; list(class=as.character(pred), prob=p) }
+      else if (is.matrix(pred) || is.data.frame(pred)) { p <- as.matrix(pred); cls <- colnames(p) %||% class_levels %||% paste0("Class",1:ncol(p)); colnames(p) <- cls; list(class=cls[apply(p,1,which.max)], prob=p) }
+      else { cls <- class_levels %||% c("0","1"); p <- cbind(1-as.numeric(pred), as.numeric(pred)); colnames(p) <- cls; list(class=cls[which.max(p[1,])], prob=p) }
     },
-    
     stop(paste("Неизвестная модель для предсказания:", model_id))
   )
 }
@@ -471,51 +222,36 @@ predict_with_model <- function(mod, new_data, model_id, model_params = list(), c
 # =============================================================================
 # Предсказание для стекинга: генерация мета-признаков из обученных базовых моделей
 # =============================================================================
-
 predict_stack_base_models <- function(base_models_trained, new_data, class_levels) {
   probs_list <- list()
-  
   for (bm in names(base_models_trained)) {
     mod <- base_models_trained[[bm]]
+    probs <- NULL
     
     if (inherits(mod, "randomForest")) {
       probs <- predict(mod, newdata = new_data, type = "prob")
     } else if (inherits(mod, "ranger")) {
       probs <- predict(mod, data = new_data)$predictions
     } else if (inherits(mod, "gbm")) {
-      probs <- predict(mod, newdata = new_data, n.trees = mod$n.trees, type = "response")
-      if (is.array(probs) && length(dim(probs)) == 3) {
-        probs <- as.matrix(probs[, , 1])
-      }
+      nt <- if (!is.null(mod$n.trees)) mod$n.trees else 100
+      probs <- predict(mod, newdata = new_data, n.trees = nt, type = "response")
+      if (is.array(probs) && length(dim(probs)) == 3) probs <- as.matrix(probs[,,1])
     } else if (inherits(mod, "xgb.Booster")) {
-      dtest <- xgboost::xgb.DMatrix(df_to_numeric_matrix(new_data))
-      raw_pred <- predict(mod, dtest)
-      n_classes <- length(class_levels)
-      if (n_classes == 2) {
-        probs <- matrix(c(1 - raw_pred, raw_pred), nrow = 1)
-      } else {
-        probs <- matrix(as.numeric(raw_pred), nrow = 1, byrow = TRUE)
-      }
+      raw <- c(predict(mod, xgboost::xgb.DMatrix(df_to_numeric_matrix(new_data))))
+      if (length(class_levels) == 2) probs <- cbind(1-raw, raw) else probs <- matrix(raw, nrow=1)
     } else if (inherits(mod, "ada")) {
       probs <- predict(mod, newdata = new_data, type = "prob")
     } else if (inherits(mod, "boosting")) {
       probs <- predict(mod, newdata = new_data)$prob
     } else if (inherits(mod, "glm")) {
-      prob_pos <- predict(mod, newdata = new_data, type = "response")
-      probs <- matrix(c(1 - prob_pos, prob_pos), nrow = 1)
+      pp <- predict(mod, newdata = new_data, type = "response")
+      probs <- cbind(1-pp, pp)
     } else if (inherits(mod, "multinom")) {
       probs <- predict(mod, newdata = new_data, type = "probs")
     } else if (inherits(mod, "kknn")) {
-      if (is.null(mod$train_data)) {
-        stop("Для kNN в стекинге не сохранены обучающие данные")
-      }
-      pred <- kknn::kknn(
-        Class ~ .,
-        train = mod$train_data,
-        test = new_data,
-        k = mod$k_value %||% 5,
-        kernel = mod$kernel_value %||% "optimal"
-      )
+      if (is.null(mod$train_data)) stop("Для kNN в стекинге не сохранены обучающие данные")
+      pred <- kknn::kknn(Class ~ ., train = mod$train_data, test = new_data,
+        k = mod$k_value %||% 5, kernel = mod$kernel_value %||% "optimal")
       probs <- pred$prob
     } else if (inherits(mod, "rpart")) {
       probs <- predict(mod, newdata = new_data, type = "prob")
@@ -528,15 +264,13 @@ predict_stack_base_models <- function(base_models_trained, new_data, class_level
       stop(paste("Неизвестный тип базовой модели:", class(mod)[1]))
     }
     
-    if (!is.matrix(probs)) {
-      probs <- matrix(probs, nrow = 1)
-    }
+    if (is.null(probs)) next
+    if (!is.matrix(probs)) probs <- matrix(probs, nrow = 1)
     colnames(probs) <- class_levels
     
     for (j in 1:ncol(probs)) {
       probs_list[[paste0(bm, "_", colnames(probs)[j])]] <- probs[, j]
     }
   }
-  
   as.data.frame(probs_list)
 }
