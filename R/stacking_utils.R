@@ -148,9 +148,12 @@ train_meta_model <- function(meta_train, meta_test, meta_model_id, y_train_level
       if (!is_binary) xgb_params$num_class <- length(unique(meta_train$Class))
       
       mod <- xgboost::xgb.train(xgb_params, dtrain, nrounds = meta_params$nrounds %||% 100, verbose = 0)
-      probs <- predict(mod, dtest, reshape = TRUE)
-      if (is_binary) {
-        probs <- cbind(1 - probs, probs)
+      raw_pred <- predict(mod, dtest)
+      n_classes <- length(y_train_levels)
+      if (n_classes == 2) {
+        probs <- matrix(c(1 - raw_pred, raw_pred), nrow = 1)
+      } else {
+        probs <- matrix(as.numeric(raw_pred), nrow = 1, byrow = TRUE)
       }
       colnames(probs) <- y_train_levels
       list(model = mod, probs = probs)
@@ -271,6 +274,20 @@ train_stacking <- function(params, train_data, test_data, target) {
   # Расчёт метрик
   y_test <- test_data[[target]]
   metrics <- calc_metrics(result$probs, y_test)
+  
+  # Сохраняем обученные базовые модели для последующего предсказания
+  base_models_trained <- list()
+  for (bm in base_models) {
+    bm_params <- base_params[[bm]] %||% list()
+    base_models_trained[[bm]] <- train_single_model(bm, bm_params, train_data, train_data, target)$model
+  }
+  
+  # Сохраняем всё в модель стекинга
+  result$model$stack_base_models_trained <- base_models_trained
+  result$model$stack_meta_model <- meta_model_id
+  result$model$stack_meta_params <- meta_params
+  result$model$stack_target <- target
+  result$model$stack_class_levels <- y_train_levels
   
   list(
     model = result$model,

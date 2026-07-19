@@ -157,25 +157,28 @@ predictionServer <- function(id, session_data) {
       }
       new_row <- as.data.frame(new_row, stringsAsFactors = FALSE)
       
+      # Получаем уровни целевой переменной для корректных названий классов
+      class_levels <- levels(df[[target]])
+      
       # Предсказание через единый движок
       pred_result <- tryCatch({
-        predict_with_model(mod, new_row, selected_model_id, model_meta$params)
+        predict_with_model(mod, new_row, selected_model_id, model_meta$params, class_levels)
       }, error = function(e) {
         showNotification(paste("Ошибка предсказания:", e$message), type = "error")
         return(NULL)
       })
       req(pred_result)
       
-      # Формируем вывод
-      output_text <- paste("Предсказанный класс:", pred_result$class)
-      if (!is.null(pred_result$prob)) {
-        if (is.matrix(pred_result$prob) && nrow(pred_result$prob) == 1) {
-          prob_vec <- pred_result$prob[1, ]
-          prob_text <- paste(names(prob_vec), round(prob_vec, 3), sep = ": ", collapse = ", ")
-          output_text <- paste0(output_text, "\nВероятности: ", prob_text)
-        } else if (is.numeric(pred_result$prob) && length(pred_result$prob) == 1) {
-          output_text <- paste0(output_text, "\nВероятность: ", round(pred_result$prob, 3))
-        }
+      # Формируем единый вывод: класс + вероятности
+      pred_class <- pred_result$class
+      prob_matrix <- pred_result$prob
+      
+      if (!is.null(prob_matrix) && is.matrix(prob_matrix) && nrow(prob_matrix) == 1) {
+        prob_vec <- prob_matrix[1, ]
+        prob_text <- paste(names(prob_vec), round(prob_vec, 3), sep = ": ", collapse = ", ")
+        output_text <- paste0("Предсказанный класс: ", pred_class, "\nВероятности: ", prob_text)
+      } else {
+        output_text <- paste("Предсказанный класс:", pred_class)
       }
       output$prediction_result <- renderText(output_text)
       
