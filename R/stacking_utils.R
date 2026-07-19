@@ -12,6 +12,54 @@ train_base_and_predict <- function(model_id, params, train_data, test_data, targ
 }
 
 # =============================================================================
+# Нормализация матрицы вероятностей под канонические уровни классов
+# =============================================================================
+
+normalize_prob_matrix <- function(probs, class_levels, bm_name = "unknown") {
+  if (is.null(probs)) return(NULL)
+  
+  n_classes <- length(class_levels)
+  n_rows <- NROW(probs)
+  
+  if (is.null(dim(probs)) || length(dim(probs)) != 2) {
+    warning(sprintf("Базовая модель %s вернула не матрицу вероятностей", bm_name))
+    return(NULL)
+  }
+  
+  probs <- as.matrix(probs)
+  n_in <- ncol(probs)
+  
+  if (n_in == n_classes) {
+    colnames(probs) <- NULL
+    return(probs)
+  }
+  
+  # Try matching by column names first
+  canon <- matrix(0, nrow = n_rows, ncol = n_classes)
+  existing_cols <- colnames(probs)
+  if (!is.null(existing_cols)) {
+    matched <- intersect(existing_cols, class_levels)
+    if (length(matched) == n_classes) {
+      for (cl in class_levels) {
+        canon[, which(class_levels == cl)] <- probs[, which(existing_cols == cl), drop = TRUE]
+      }
+      return(canon)
+    }
+  }
+  
+  # Fallback: copy by position, truncate or pad to n_classes
+  n_copy <- min(n_in, n_classes)
+  canon[, 1:n_copy] <- probs[, 1:n_copy, drop = FALSE]
+  
+  row_sums <- rowSums(canon, na.rm = TRUE)
+  if (any(row_sums > 0)) {
+    canon[row_sums > 0, ] <- canon[row_sums > 0, ] / row_sums[row_sums > 0]
+  }
+  
+  canon
+}
+
+# =============================================================================
 # Генерация мета-признаков через 5-кратную кросс-валидацию
 # =============================================================================
 
@@ -19,6 +67,7 @@ generate_meta_features <- function(base_models, base_params, train_data, test_da
   set.seed(111)
   y_train <- train_data[[target]]
   folds <- caret::createFolds(y_train, k = k, list = TRUE)
+  y_train_levels <- levels(y_train)
   
   meta_train_list <- list()
   meta_test_list <- list()
@@ -48,11 +97,14 @@ generate_meta_features <- function(base_models, base_params, train_data, test_da
         NULL
       })
       
-      if (!is.null(probs_val) && !is.null(probs_test)) {
-        for (j in 1:ncol(probs_val)) {
-          colname <- paste0(bm, "_", colnames(probs_val)[j])
-          val_probs_list[[colname]] <- probs_val[, j]
-          test_probs_list[[colname]] <- probs_test[, j]
+      canon_val <- normalize_prob_matrix(probs_val, y_train_levels, bm)
+      canon_test <- normalize_prob_matrix(probs_test, y_train_levels, bm)
+      
+      if (!is.null(canon_val) && !is.null(canon_test)) {
+        for (j in seq_along(y_train_levels)) {
+          colname <- paste0(bm, "_", y_train_levels[j])
+          val_probs_list[[colname]] <- canon_val[, j]
+          test_probs_list[[colname]] <- canon_test[, j]
         }
       }
     }
@@ -128,13 +180,17 @@ train_meta_model <- function(meta_train, meta_test, meta_model_id, y_train_level
     },
     
     "xgb" = {
+      meta_feature_names <- colnames(meta_train)[!(names(meta_train) %in% "Class")]
       meta_train_num <- df_to_numeric_matrix(meta_train[, !(names(meta_train) %in% "Class")])
       meta_test_num <- df_to_numeric_matrix(meta_test)
       # Убираем colnames для xgboost
       colnames(meta_train_num) <- NULL
       colnames(meta_test_num) <- NULL
-      meta_train_num <- meta_train_num[, colSums(is.na(meta_train_num)) == 0, drop = FALSE]
-      meta_test_num <- meta_test_num[, colSums(is.na(meta_test_num)) == 0, drop = FALSE]
+      keep_train <- colSums(is.na(meta_train_num)) == 0
+      keep_test <- colSums(is.na(meta_test_num)) == 0
+      meta_train_num <- meta_train_num[, keep_train, drop = FALSE]
+      meta_test_num <- meta_test_num[, keep_test, drop = FALSE]
+      actual_feature_cols <- meta_feature_names[keep_train]
       
       dtrain <- xgboost::xgb.DMatrix(meta_train_num, label = as.numeric(meta_train$Class) - 1)
       dtest <- xgboost::xgb.DMatrix(meta_test_num)
@@ -153,17 +209,17 @@ train_meta_model <- function(meta_train, meta_test, meta_model_id, y_train_level
       
       mod <- xgboost::xgb.train(xgb_params, dtrain, nrounds = meta_params$nrounds %||% 100, verbose = 0)
       raw_pred <- predict(mod, dtest)
-      raw_vec <- c(raw_pred)
+      raw_vec <- as.numeric(raw_pred)
       n_classes <- length(y_train_levels)
       if (n_classes == 2) {
         # Бинарный случай: raw_vec - вектор вероятностей класса 1
         probs <- cbind(1 - raw_vec, raw_vec)
         colnames(probs) <- y_train_levels
       } else {
-        probs <- matrix(raw_vec, nrow = nrow(meta_test), byrow = TRUE)
+        probs <- matrix(raw_vec, ncol = n_classes, byrow = TRUE)
         colnames(probs) <- y_train_levels
       }
-      list(model = mod, probs = probs)
+      list(model = mod, probs = probs, actual_feature_cols = actual_feature_cols)
     },
     
     "ada" = {
@@ -211,6 +267,8 @@ train_meta_model <- function(meta_train, meta_test, meta_model_id, y_train_level
       p_raw <- predict(mod, meta_test, n.trees = meta_params$n.trees %||% 500, type = "response")
       if (is.array(p_raw) && length(dim(p_raw)) == 3) {
         probs <- as.matrix(p_raw[, , 1])
+        # Убираем dimnames, которые могут вызывать ошибку
+        dimnames(probs) <- NULL
       } else {
         probs <- as.matrix(p_raw)
       }
@@ -286,19 +344,33 @@ train_stacking <- function(params, train_data, test_data, target) {
   y_test <- test_data[[target]]
   metrics <- calc_metrics(result$probs, y_test)
   
-  # Сохраняем обученные базовые модели для последующего предсказания
+  # Сохраняем обученные базовые модели, только те что реально участвовали в обучении
+  meta_feature_cols <- setdiff(colnames(meta$train), target)
+  used_models <- unique(gsub("_[^_]+$", "", meta_feature_cols))
   base_models_trained <- list()
-  for (bm in base_models) {
+  for (bm in intersect(base_models, used_models)) {
     bm_params <- base_params[[bm]] %||% list()
     base_models_trained[[bm]] <- train_single_model(bm, bm_params, train_data, train_data, target)$model
   }
   
-  # Сохраняем всё в модель стекинга
-  result$model$stack_base_models_trained <- base_models_trained
-  result$model$stack_meta_model <- meta_model_id
-  result$model$stack_meta_params <- meta_params
-  result$model$stack_target <- target
-  result$model$stack_class_levels <- y_train_levels
+  # Оборачиваем модель в список с метаданными стекинга
+  # Это позволяет надежно сохранять/загружать xgb.Booster и другие модели
+  # Если xgb вернул actual_feature_cols после фильтрации NA, используем их
+  meta_feature_cols <- setdiff(colnames(meta$train), target)
+  if (!is.null(result$actual_feature_cols)) {
+    meta_feature_cols <- result$actual_feature_cols
+  }
+  stack_obj <- list(
+    meta_model = result$model,
+    base_models_trained = base_models_trained,
+    meta_model_id = meta_model_id,
+    meta_params = meta_params,
+    target = target,
+    class_levels = y_train_levels,
+    meta_feature_cols = meta_feature_cols
+  )
+  class(stack_obj) <- "stacking_model"
+  result$model <- stack_obj
   
   list(
     model = result$model,
