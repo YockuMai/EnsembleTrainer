@@ -92,9 +92,9 @@ train_single_model <- function(model_id, params, train_data, test_data, target) 
       mod <- xgboost::xgb.train(list(objective = "multi:softprob", num_class = length(unique(y_train)),
         max_depth = params$max_depth %||% 6, eta = params$eta %||% 0.3, subsample = params$subsample %||% 1), dtrain,
         nrounds = params$nrounds %||% 100, verbose = 0)
-      raw <- as.numeric(predict(mod, dtest))
+      raw <- predict(mod, dtest)
       ncls <- length(levels(y_train))
-      probs <- if (ncls == 2) cbind(1-raw, raw) else matrix(raw, nrow = nrow(X_test), byrow = TRUE)
+      probs <- matrix(as.numeric(raw), nrow = nrow(X_test), ncol = ncls, byrow = TRUE)
       colnames(probs) <- levels(y_train)
       list(model = mod, metrics = calc_metrics(probs, y_test), probs = probs, class = "xgboost", label = "XGBoost")
     },
@@ -183,17 +183,30 @@ predict_with_model <- function(mod, new_data, model_id, model_params = list(), c
       }
     },
     "xgb" = {
-      raw <- as.numeric(predict(mod, xgboost::xgb.DMatrix(df_to_numeric_matrix(new_data))))
+      raw <- predict(mod, xgboost::xgb.DMatrix(df_to_numeric_matrix(new_data)))
       ncls <- length(class_levels %||% c("0","1"))
-      if (ncls == 2) {
-        cls <- class_levels %||% c("0","1"); p <- cbind(1-raw, raw); colnames(p) <- cls; list(class = cls[ifelse(raw>0.5,2,1)], prob = p)
-      } else {
-        p <- matrix(raw, ncol = ncls, byrow = TRUE); cls <- class_levels %||% paste0("Class",1:ncls); colnames(p) <- cls; list(class = cls[which.max(p[1,])], prob = p)
-      }
+      p <- matrix(as.numeric(raw), ncol = ncls, byrow = TRUE)
+      cls <- class_levels %||% paste0("Class", 1:ncls)
+      colnames(p) <- cls
+      list(class = cls[apply(p, 1, which.max)], prob = p)
     },
     "ada" = {
-      if (inherits(mod, "ada")) { pred <- predict(mod, newdata = new_data, type = "prob"); list(class = colnames(pred)[apply(pred,1,which.max)], prob = pred) }
-      else { pred <- predict(mod, newdata = new_data); list(class = as.character(pred$class), prob = pred$prob) }
+      if (inherits(mod, "ada")) {
+        pred <- predict(mod, newdata = new_data, type = "prob")
+        if (is.data.frame(pred)) pred <- as.matrix(pred)
+        cls <- colnames(pred) %||% class_levels %||% paste0("Class", 1:ncol(pred))
+        colnames(pred) <- cls
+        list(class = cls[apply(pred, 1, which.max)], prob = pred)
+      } else {
+        pred <- predict(mod, newdata = new_data)
+        if (is.data.frame(pred$prob)) pred$prob <- as.matrix(pred$prob)
+        cls <- colnames(pred$prob) %||% class_levels %||% paste0("Class", 1:ncol(pred$prob))
+        colnames(pred$prob) <- cls
+        if (is.null(pred$class) || all(is.na(as.character(pred$class)))) {
+          pred$class <- cls[apply(pred$prob, 1, which.max)]
+        }
+        list(class = as.character(pred$class), prob = pred$prob)
+      }
     },
     "glm" = {
       if (inherits(mod, "glm")) {
@@ -327,11 +340,7 @@ predict_stack_base_models <- function(base_models_trained, new_data, class_level
       raw <- predict(mod, xgboost::xgb.DMatrix(df_to_numeric_matrix(new_data)))
       class_levels <- class_levels %||% paste0("Class", 1:length(unique(raw)))
       ncls <- length(class_levels)
-      if (ncls == 2) {
-        probs <- cbind(1 - raw, raw)
-      } else {
-        probs <- matrix(raw, ncol = ncls, byrow = TRUE)
-      }
+      probs <- matrix(as.numeric(raw), ncol = ncls, byrow = TRUE)
     } else {
       stop(paste("Неизвестный тип базовой модели:", class(mod)[1]))
     }
